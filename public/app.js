@@ -2,7 +2,12 @@ const state = {
   students: [],
   settings: {},
   dashboard: null,
-  classOptions: []
+  classOptions: [],
+  espEvents: [],
+  lastEventId: null,
+  ws: null,
+  wsReconnectTimer: null,
+  fallbackTimer: null
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -28,6 +33,7 @@ function toast(message) {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    cache: 'no-store',
     ...options
   });
 
@@ -109,6 +115,172 @@ function renderHistory() {
       </article>
     `).join('')
     : '<p class="muted">Belum ada absensi hari ini.</p>';
+}
+
+function formatTime(value) {
+  return new Date(value).toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
+function eventStatusClass(status) {
+  return ['success', 'warning', 'danger'].includes(status) ? status : 'info';
+}
+
+function setRealtimeStatus(connected) {
+  const el = qs('#wsStatus');
+  if (!el) return;
+  el.textContent = connected ? 'Realtime on' : 'Realtime off';
+  el.classList.toggle('offline', !connected);
+}
+
+function renderEspEvents() {
+  const latest = state.espEvents[0];
+  const list = qs('#espEventList');
+  const monitor = qs('#fingerprintMonitor');
+  const badge = qs('#fingerStatusBadge');
+
+  if (!latest) {
+    qs('#fingerStatusText').textContent = 'Menunggu sidik jari';
+    qs('#fingerStatusDetail').textContent = 'Aktivitas sensor akan tampil di sini.';
+    qs('#fingerStatusId').textContent = 'ID -';
+    list.innerHTML = '<p class="muted">Belum ada aktivitas sensor.</p>';
+    return;
+  }
+
+  const isFresh = Date.now() - new Date(latest.createdAt).getTime() < 7000;
+  monitor.classList.toggle('active', isFresh);
+  badge.className = `badge ${latest.status === 'danger' ? 'rejected' : ''}`;
+  badge.textContent = latest.status === 'success'
+    ? 'Berhasil'
+    : latest.status === 'warning'
+      ? 'Proses'
+      : latest.status === 'danger'
+        ? 'Ditolak'
+        : 'Terbaca';
+
+  qs('#fingerStatusText').textContent = latest.type === 'enroll' ? 'Enrollment fingerprint' : 'Scan fingerprint';
+  qs('#fingerStatusDetail').textContent = latest.message;
+  qs('#fingerStatusId').textContent = latest.fingerprintId ? `ID ${latest.fingerprintId}` : 'ID -';
+
+  list.innerHTML = state.espEvents.length
+    ? state.espEvents.map((event) => `
+      <article class="event-item ${eventStatusClass(event.status)}">
+        <span class="event-pulse"></span>
+        <div>
+          <strong>${escapeHtml(event.message)}</strong>
+          <div class="muted">${escapeHtml(event.type)}${event.fingerprintId ? ` - ID ${escapeHtml(event.fingerprintId)}` : ''}</div>
+        </div>
+        <span class="event-time">${formatTime(event.createdAt)}</span>
+      </article>
+    `).join('')
+    : '<p class="muted">Belum ada aktivitas sensor.</p>';
+}
+
+function mergeEspEvent(event) {
+  if (!event?.id) return false;
+  const isNew = !state.espEvents.some((item) => item.id === event.id);
+  if (isNew) {
+    state.espEvents = [event, ...state.espEvents].slice(0, 40);
+    state.lastEventId = event.id;
+    renderEspEvents();
+    toast(event.message);
+  }
+  return isNew;
+}
+
+async function refreshDashboard() {
+  state.dashboard = await api('/api/dashboard');
+  renderStats();
+  renderChart();
+  renderHistory();
+}
+
+async function addLocalEspEvent(event) {
+  const result = await api('/api/esp32/events', {
+    method: 'POST',
+    body: JSON.stringify(event)
+  });
+  mergeEspEvent(result.event);
+}
+
+function connectEventSocket() {
+  if (state.ws && [WebSocket.OPEN, WebSocket.CONNECTING].includes(state.ws.readyState)) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+  state.ws = socket;
+
+  socket.addEventListener('open', () => {
+    setRealtimeStatus(true);
+    if (state.fallbackTimer) {
+      window.clearInterval(state.fallbackTimer);
+      state.fallbackTimer = null;
+    }
+  });
+
+  socket.addEventListener('message', async (message) => {
+    let data;
+    try {
+      data = JSON.parse(message.data);
+    } catch (_error) {
+      return;
+    }
+
+    if (data.type === 'esp-events:init') {
+      state.espEvents = data.payload || [];
+      state.lastEventId = state.espEvents[0]?.id || null;
+      renderEspEvents();
+      return;
+    }
+
+    if (data.type === 'esp-event') {
+      const isNew = mergeEspEvent(data.payload);
+      if (isNew && data.payload?.type === 'scan') {
+        await refreshDashboard();
+      }
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    setRealtimeStatus(false);
+    startEventFallback();
+    if (state.wsReconnectTimer) window.clearTimeout(state.wsReconnectTimer);
+    state.wsReconnectTimer = window.setTimeout(connectEventSocket, 1800);
+  });
+
+  socket.addEventListener('error', () => {
+    setRealtimeStatus(false);
+  });
+}
+
+async function pollEspEventsOnce() {
+  try {
+    const events = await api('/api/esp32/events');
+    const latest = events[0];
+    const hasNew = latest?.id && latest.id !== state.lastEventId;
+
+    state.espEvents = events;
+    state.lastEventId = latest?.id || null;
+    renderEspEvents();
+
+    if (hasNew) {
+      toast(latest.message);
+      if (latest.type === 'scan') await refreshDashboard();
+    }
+  } catch (error) {
+    console.warn(error.message);
+  }
+}
+
+function startEventFallback() {
+  if (state.fallbackTimer) return;
+  state.fallbackTimer = window.setInterval(() => {
+    if (state.ws?.readyState === WebSocket.OPEN) return;
+    pollEspEventsOnce();
+  }, 1500);
 }
 
 function renderStudents() {
@@ -196,23 +368,27 @@ function showAttendanceModal(result) {
 }
 
 async function loadAll() {
-  const [meta, students, settings, dashboard] = await Promise.all([
+  const [meta, students, settings, dashboard, espEvents] = await Promise.all([
     api('/api/meta'),
     api('/api/students'),
     api('/api/settings'),
-    api('/api/dashboard')
+    api('/api/dashboard'),
+    api('/api/esp32/events')
   ]);
 
   state.classOptions = meta.classOptions;
   state.students = students;
   state.settings = settings;
   state.dashboard = dashboard;
+  state.espEvents = espEvents;
+  state.lastEventId = espEvents[0]?.id || null;
 
   fillClasses();
   renderStudents();
   renderStats();
   renderChart();
   renderHistory();
+  renderEspEvents();
   updateEspStatus();
 }
 
@@ -268,11 +444,28 @@ function bindEvents() {
       toast('Isi ID Finger terlebih dulu.');
       return;
     }
-    toast('Tempelkan jari ke sensor sampai proses selesai.');
-    const response = await fetch(`http://${ip}/enroll?id=${fingerprintId}`);
-    const result = await response.json().catch(() => ({ ok: false }));
-    if (!response.ok || !result.ok) throw new Error(result.message || 'Enrollment sensor gagal.');
-    toast('Enrollment sensor berhasil.');
+    await addLocalEspEvent({
+      type: 'enroll',
+      status: 'info',
+      fingerprintId,
+      message: 'Mulai enrollment. Tempelkan jari ke sensor.'
+    });
+    toast('Lihat panel Sensor Fingerprint untuk instruksi.');
+
+    try {
+      const response = await fetch(`http://${ip}/enroll?id=${fingerprintId}`, { cache: 'no-store' });
+      const result = await response.json().catch(() => ({ ok: false }));
+      if (!response.ok || !result.ok) throw new Error(result.message || 'Enrollment sensor gagal.');
+      toast('Enrollment sensor berhasil.');
+    } catch (error) {
+      await addLocalEspEvent({
+        type: 'enroll',
+        status: 'danger',
+        fingerprintId,
+        message: error.message
+      });
+      toast(error.message);
+    }
   });
 
   qs('#clearStudentsBtn').addEventListener('click', async () => {
@@ -333,8 +526,10 @@ function bindEvents() {
 
 async function init() {
   formatDate();
+  setRealtimeStatus(false);
   bindEvents();
   await loadAll();
+  connectEventSocket();
   ['wifi_ssid', 'wifi_password', 'esp_ip', 'firmware_url'].forEach((key) => {
     qs(`#${key}`).value = state.settings[key] || '';
   });

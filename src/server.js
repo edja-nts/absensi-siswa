@@ -2,10 +2,12 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const multer = require('multer');
+const { WebSocketServer, WebSocket } = require('ws');
 const db = require('./db');
 const { sendBlynkUpdate } = require('./blynk');
 
@@ -13,6 +15,8 @@ const app = express();
 const PORT = Number(process.env.PORT || 8080);
 const rootDir = path.join(__dirname, '..');
 const uploadDir = path.join(rootDir, 'public', 'uploads');
+const httpServer = http.createServer(app);
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -29,10 +33,49 @@ const upload = multer({ storage });
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(morgan('dev'));
-app.use(express.static(path.join(rootDir, 'public')));
+app.use(morgan('dev', {
+  skip: (req) => req.path === '/api/esp32/events' && req.method === 'GET'
+}));
+app.use(express.static(path.join(rootDir, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  }
+}));
 
 const classOptions = ['Autis', 'Tuna Rungu', 'Tuna Grahita', 'Tuna Daksa', 'Tuna Netra', 'Tuna Wicara', 'Lainnya'];
+const espEvents = [];
+
+function broadcast(type, payload) {
+  const message = JSON.stringify({ type, payload });
+  let sent = 0;
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+      sent += 1;
+    }
+  });
+  return sent;
+}
+
+function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'info' }) {
+  const safeStatus = ['info', 'success', 'warning', 'danger'].includes(status) ? status : 'info';
+  const event = {
+    id: Date.now(),
+    type,
+    status: safeStatus,
+    message: message || 'Event ESP32 diterima.',
+    fingerprintId,
+    createdAt: new Date().toISOString()
+  };
+
+  espEvents.unshift(event);
+  if (espEvents.length > 40) espEvents.pop();
+  const sent = broadcast('esp-event', event);
+  console.log(`[WS] event ${event.type}/${event.status} -> ${sent} client(s): ${event.message}`);
+  return event;
+}
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -148,6 +191,27 @@ app.get('/api/meta', (_req, res) => {
   res.json({ classOptions });
 });
 
+wss.on('connection', (socket) => {
+  console.log(`[WS] browser connected. clients=${wss.clients.size}`);
+  socket.send(JSON.stringify({ type: 'esp-events:init', payload: espEvents }));
+  socket.on('close', () => {
+    console.log(`[WS] browser disconnected. clients=${wss.clients.size}`);
+  });
+});
+
+app.get('/api/esp32/events', (_req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.json(espEvents);
+});
+
+app.post('/api/esp32/events', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const event = addEspEvent(req.body || {});
+  res.status(201).json({ ok: true, event });
+});
+
 app.get('/api/dashboard', (req, res) => {
   const date = req.query.date || today();
   const rows = db.prepare(`
@@ -227,6 +291,16 @@ app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
 
   const photoPath = req.file ? `/uploads/${req.file.filename}` : req.body.photoPath || null;
   const result = recordAttendance({ fingerprintId, photoPath, note: req.body.note || null });
+  addEspEvent({
+    type: 'scan',
+    status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
+    fingerprintId,
+    message: result.duplicate
+      ? `ID ${fingerprintId} sudah absen hari ini.`
+      : result.accepted
+        ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
+        : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
+  });
   res.status(result.accepted ? 201 : 202).json(result);
 });
 
@@ -277,6 +351,16 @@ app.post('/api/esp32/scan', (req, res) => {
   }
 
   const result = recordAttendance({ fingerprintId, note: 'Dikirim dari ESP32' });
+  addEspEvent({
+    type: 'scan',
+    status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
+    fingerprintId,
+    message: result.duplicate
+      ? `ID ${fingerprintId} sudah absen hari ini.`
+      : result.accepted
+        ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
+        : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
+  });
   res.status(result.accepted ? 201 : 202).json({ ok: true, ...result });
 });
 
@@ -284,6 +368,6 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(rootDir, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Absensi siswa berjalan di http://localhost:${PORT}`);
 });

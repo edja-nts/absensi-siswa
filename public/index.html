@@ -34,6 +34,7 @@
         <div class="top-actions">
           <span class="status-dot"></span>
           <span id="espStatus">ESP belum diset</span>
+          <span class="status-pill offline" id="wsStatus">Realtime off</span>
         </div>
       </header>
 
@@ -135,6 +136,38 @@
             <button type="submit">Scan</button>
           </form>
         </section>
+
+        <div class="attendance-grid">
+          <section class="panel fingerprint-panel">
+            <div class="panel-head">
+              <h2>Sensor Fingerprint</h2>
+              <span class="badge" id="fingerStatusBadge">Standby</span>
+            </div>
+            <div class="fingerprint-monitor" id="fingerprintMonitor">
+              <div class="fingerprint-visual" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <div>
+                <p class="eyebrow">Status Terakhir</p>
+                <h3 id="fingerStatusText">Menunggu sidik jari</h3>
+                <p class="muted" id="fingerStatusDetail">Aktivitas sensor akan tampil di sini.</p>
+                <strong class="finger-id" id="fingerStatusId">ID -</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Log Sensor</h2>
+            </div>
+            <div class="event-list" id="espEventList"></div>
+          </section>
+        </div>
       </section>
 
       <section class="view" id="settings">

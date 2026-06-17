@@ -1,12 +1,11 @@
 #include <Arduino.h>
+#include "config.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
-#include <ArduinoJson.h>
 #include <BlynkSimpleEsp32.h>
 #include <Adafruit_Fingerprint.h>
 #include "esp_camera.h"
-#include "config.h"
 
 WebServer server(80);
 HardwareSerial mySerial(1);
@@ -17,43 +16,48 @@ bool initCamera() {
   memset(&cfg, 0, sizeof(cfg));
 
   cfg.ledc_channel = LEDC_CHANNEL_0;
-  cfg.ledc_timer = LEDC_TIMER_0;
-  cfg.pin_d0 = Y2_GPIO_NUM;
-  cfg.pin_d1 = Y3_GPIO_NUM;
-  cfg.pin_d2 = Y4_GPIO_NUM;
-  cfg.pin_d3 = Y5_GPIO_NUM;
-  cfg.pin_d4 = Y6_GPIO_NUM;
-  cfg.pin_d5 = Y7_GPIO_NUM;
-  cfg.pin_d6 = Y8_GPIO_NUM;
-  cfg.pin_d7 = Y9_GPIO_NUM;
-  cfg.pin_xclk = XCLK_GPIO_NUM;
-  cfg.pin_pclk = PCLK_GPIO_NUM;
-  cfg.pin_vsync = VSYNC_GPIO_NUM;
-  cfg.pin_href = HREF_GPIO_NUM;
+  cfg.ledc_timer   = LEDC_TIMER_0;
+  cfg.pin_d0 = Y2_GPIO_NUM; cfg.pin_d1 = Y3_GPIO_NUM;
+  cfg.pin_d2 = Y4_GPIO_NUM; cfg.pin_d3 = Y5_GPIO_NUM;
+  cfg.pin_d4 = Y6_GPIO_NUM; cfg.pin_d5 = Y7_GPIO_NUM;
+  cfg.pin_d6 = Y8_GPIO_NUM; cfg.pin_d7 = Y9_GPIO_NUM;
+  cfg.pin_xclk     = XCLK_GPIO_NUM;
+  cfg.pin_pclk     = PCLK_GPIO_NUM;
+  cfg.pin_vsync    = VSYNC_GPIO_NUM;
+  cfg.pin_href     = HREF_GPIO_NUM;
   cfg.pin_sccb_sda = SIOD_GPIO_NUM;
   cfg.pin_sccb_scl = SIOC_GPIO_NUM;
-  cfg.pin_pwdn = PWDN_GPIO_NUM;
-  cfg.pin_reset = RESET_GPIO_NUM;
-  cfg.xclk_freq_hz = 10000000;
-  cfg.pixel_format = PIXFORMAT_JPEG;
-  cfg.frame_size = CAM_FRAMESIZE;
-  cfg.jpeg_quality = CAM_QUALITY;
-  cfg.fb_count = 1;
-  cfg.fb_location = CAMERA_FB_IN_DRAM;
-  cfg.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  cfg.pin_pwdn     = PWDN_GPIO_NUM;
+  cfg.pin_reset    = RESET_GPIO_NUM;
+  cfg.xclk_freq_hz = 10000000;          // 10MHz — lebih stabil (dari kode kamu)
+  cfg.pixel_format = PIXFORMAT_RGB565;  // RGB565 → convert ke JPEG (dari kode kamu)
+  cfg.frame_size   = FRAMESIZE_QQVGA;  // 160x120 default, bisa diubah
+  cfg.fb_count     = 1;
+  cfg.fb_location  = CAMERA_FB_IN_DRAM;
+  cfg.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
 
   esp_err_t err = esp_camera_init(&cfg);
-  if (err != ESP_OK) {
-    Serial.printf("[CAM] Gagal: 0x%x\n", err);
-    return false;
-  }
+  if (err != ESP_OK) { Serial.printf("[CAM] Gagal: 0x%x\n", err); return false; }
 
-  sensor_t *s = esp_camera_sensor_get();
-  if (s) {
-    s->set_framesize(s, CAM_FRAMESIZE);
-  }
+  // Verifikasi sensor
+  sensor_t* s = esp_camera_sensor_get();
+  if (!s) { Serial.println("[CAM] Sensor get GAGAL!"); return false; }
+  Serial.printf("[CAM] Sensor PID: 0x%x\n", s->id.PID);
+  s->set_framesize(s, FRAMESIZE_QQVGA);
+  delay(300);
 
-  Serial.println("[CAM] Siap");
+  // Test frame + convert JPEG
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { Serial.println("[CAM] Frame test GAGAL!"); return false; }
+  Serial.printf("[CAM] Frame OK: %d bytes, format: %d\n", fb->len, fb->format);
+  uint8_t* jpg_buf = NULL; size_t jpg_len = 0;
+  bool conv = frame2jpg(fb, 80, &jpg_buf, &jpg_len);
+  esp_camera_fb_return(fb);
+  if (!conv || !jpg_buf) { Serial.println("[CAM] JPEG convert GAGAL!"); if(jpg_buf) free(jpg_buf); return false; }
+  Serial.printf("[CAM] JPEG convert OK: %d bytes\n", jpg_len);
+  free(jpg_buf);
+
+  Serial.println("[CAM] Siap!");
   return true;
 }
 
@@ -68,6 +72,41 @@ bool initFingerprint() {
   return false;
 }
 
+String jsonEscape(const char *value) {
+  String output = "";
+  while (*value) {
+    if (*value == '"' || *value == '\\') output += '\\';
+    output += *value;
+    value++;
+  }
+  return output;
+}
+
+void sendEventToBackend(const char *type, const char *status, const char *message, int fingerprintId = -1) {
+  HTTPClient http;
+  String url = String(BACKEND_URL) + "/api/esp32/events";
+  http.begin(url);
+  http.setTimeout(800);
+  http.addHeader("Content-Type", "application/json");
+
+  String body = "{\"type\":\"";
+  body += jsonEscape(type);
+  body += "\",\"status\":\"";
+  body += jsonEscape(status);
+  body += "\",\"message\":\"";
+  body += jsonEscape(message);
+  body += "\"";
+  if (fingerprintId > 0) {
+    body += ",\"fingerprintId\":";
+    body += fingerprintId;
+  }
+  body += "}";
+
+  int code = http.POST(body);
+  Serial.printf("[EVENT] HTTP %d %s\n", code, message);
+  http.end();
+}
+
 int scanFP() {
   if (finger.getImage() != FINGERPRINT_OK) return -2;
   if (finger.image2Tz() != FINGERPRINT_OK) return -1;
@@ -79,48 +118,58 @@ bool deleteFP(int id) {
   return finger.deleteModel(id) == FINGERPRINT_OK;
 }
 
+bool failEnroll(uint8_t id, const char *message) {
+  Serial.printf("[FP] %s\n", message);
+  sendEventToBackend("enroll", "danger", message, id);
+  return false;
+}
+
 bool enrollFP(uint8_t id) {
   int p = -1;
   Serial.printf("[FP] Mulai enrollment ID %d\n", id);
+  sendEventToBackend("enroll", "info", "Mulai enrollment sidik jari", id);
 
   while (p != FINGERPRINT_OK) {
     p = finger.getImage();
     delay(80);
   }
-  if (finger.image2Tz(1) != FINGERPRINT_OK) return false;
+  if (finger.image2Tz(1) != FINGERPRINT_OK) return failEnroll(id, "Pembacaan sidik jari pertama gagal");
 
   Serial.println("[FP] Lepaskan jari");
+  sendEventToBackend("enroll", "warning", "Lepaskan jari dari sensor", id);
   delay(1800);
   while (finger.getImage() != FINGERPRINT_NOFINGER) {
     delay(80);
   }
 
   Serial.println("[FP] Tempelkan jari yang sama");
+  sendEventToBackend("enroll", "info", "Tempelkan jari yang sama", id);
   p = -1;
   while (p != FINGERPRINT_OK) {
     p = finger.getImage();
     delay(80);
   }
-  if (finger.image2Tz(2) != FINGERPRINT_OK) return false;
-  if (finger.createModel() != FINGERPRINT_OK) return false;
-  if (finger.storeModel(id) != FINGERPRINT_OK) return false;
+  if (finger.image2Tz(2) != FINGERPRINT_OK) return failEnroll(id, "Pembacaan sidik jari kedua gagal");
+  if (finger.createModel() != FINGERPRINT_OK) return failEnroll(id, "Sidik jari pertama dan kedua tidak cocok");
+  if (finger.storeModel(id) != FINGERPRINT_OK) return failEnroll(id, "Gagal menyimpan sidik jari ke sensor");
 
   Serial.printf("[FP] Enrollment ID %d berhasil\n", id);
+  sendEventToBackend("enroll", "success", "Enrollment sidik jari berhasil", id);
   return true;
 }
 
 void sendScanToBackend(int fingerprintId) {
-  if (WiFi.status() != WL_CONNECTED) return;
+  sendEventToBackend("scan", "info", "Sidik jari terbaca oleh sensor", fingerprintId);
 
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/esp32/scan";
   http.begin(url);
+  http.setTimeout(1500);
   http.addHeader("Content-Type", "application/json");
 
-  StaticJsonDocument<128> doc;
-  doc["fingerprintId"] = fingerprintId;
-  String body;
-  serializeJson(doc, body);
+  String body = "{\"fingerprintId\":";
+  body += fingerprintId;
+  body += "}";
 
   int code = http.POST(body);
   String response = http.getString();
@@ -135,28 +184,55 @@ void handleJpg() {
     return;
   }
 
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send_P(200, "image/jpeg", (const char *)fb->buf, fb->len);
+  uint8_t *jpgBuf = NULL;
+  size_t jpgLen = 0;
+  bool ok = frame2jpg(fb, 80, &jpgBuf, &jpgLen);
   esp_camera_fb_return(fb);
+
+  if (!ok || !jpgBuf) {
+    if (jpgBuf) free(jpgBuf);
+    server.send(500, "text/plain", "JPEG convert failed");
+    return;
+  }
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.setContentLength(jpgLen);
+  server.send(200, "image/jpeg", "");
+  server.client().write(jpgBuf, jpgLen);
+  free(jpgBuf);
 }
 
 void handleStream() {
   WiFiClient client = server.client();
-  String response = "HTTP/1.1 200 OK\r\n";
-  response += "Access-Control-Allow-Origin: *\r\n";
-  response += "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n";
-  server.sendContent(response);
+  client.print("HTTP/1.1 200 OK\r\n");
+  client.print("Access-Control-Allow-Origin: *\r\n");
+  client.print("Content-Type: multipart/x-mixed-replace; boundary=frame\r\n");
+  client.print("Cache-Control: no-cache\r\n");
+  client.print("Connection: close\r\n\r\n");
 
   while (client.connected()) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) break;
 
-    server.sendContent("--frame\r\n");
-    server.sendContent("Content-Type: image/jpeg\r\n\r\n");
-    client.write(fb->buf, fb->len);
-    server.sendContent("\r\n");
+    uint8_t *jpgBuf = NULL;
+    size_t jpgLen = 0;
+    bool ok = frame2jpg(fb, 80, &jpgBuf, &jpgLen);
     esp_camera_fb_return(fb);
-    delay(90);
+
+    if (!ok || !jpgBuf) {
+      if (jpgBuf) free(jpgBuf);
+      Serial.println("[CAM] Stream JPEG convert gagal");
+      break;
+    }
+
+    client.print("--frame\r\n");
+    client.print("Content-Type: image/jpeg\r\n");
+    client.printf("Content-Length: %u\r\n\r\n", (unsigned int)jpgLen);
+    client.write(jpgBuf, jpgLen);
+    client.print("\r\n");
+    free(jpgBuf);
+
+    delay(120);
   }
 }
 
@@ -187,16 +263,32 @@ void setupRoutes() {
 }
 
 void connectWifi() {
-  WiFi.mode(WIFI_STA);
+  IPAddress apIP(AP_IP_OCTET_1, AP_IP_OCTET_2, AP_IP_OCTET_3, AP_IP_OCTET_4);
+  IPAddress gateway(AP_IP_OCTET_1, AP_IP_OCTET_2, AP_IP_OCTET_3, AP_IP_OCTET_4);
+  IPAddress subnet(255, 255, 255, 0);
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAPConfig(apIP, gateway, subnet);
+  bool apOk = WiFi.softAP(AP_SSID, AP_PASSWORD);
+
+  Serial.printf("[AP] %s %s\n", AP_SSID, apOk ? "aktif" : "gagal");
+  Serial.printf("[AP] IP ESP32: %s\n", WiFi.softAPIP().toString().c_str());
+  Serial.println("[AP] Set IP laptop manual ke 192.168.4.2, subnet 255.255.255.0");
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("[WiFi] Menghubungkan ke %s", WIFI_SSID);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long startedAt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startedAt < 20000) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.printf("\n[WiFi] IP: %s\n", WiFi.localIP().toString().c_str());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WiFi] Terhubung. IP STA: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\n[WiFi] Gagal konek ke hotspot HP. AP lokal tetap aktif.");
+  }
 }
 
 void setup() {

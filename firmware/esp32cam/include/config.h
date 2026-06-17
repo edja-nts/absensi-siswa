@@ -1,8 +1,16 @@
 #pragma once
 
-#define WIFI_SSID "NAMA_WIFI"
-#define WIFI_PASSWORD "PASSWORD_WIFI"
-#define BACKEND_URL "http://192.168.1.10:8080"
+#define WIFI_SSID "c30"
+#define WIFI_PASSWORD "12345678"
+
+#define AP_SSID "Absensi-SLB"
+#define AP_PASSWORD "12345678"
+#define AP_IP_OCTET_1 192
+#define AP_IP_OCTET_2 168
+#define AP_IP_OCTET_3 4
+#define AP_IP_OCTET_4 1
+
+#define BACKEND_URL "http://192.168.4.2:8080"
 
 #define BLYNK_TEMPLATE_ID "TMPL67t1bjQQr"
 #define BLYNK_TEMPLATE_NAME "Presensi SLB"

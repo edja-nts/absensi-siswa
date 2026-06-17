@@ -167,6 +167,23 @@ button:hover {
   background: var(--warning);
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #08735b;
+  background: #e8f7f3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-pill.offline {
+  color: #a52828;
+  background: #fdecec;
+}
+
 .view {
   display: none;
 }
@@ -389,6 +406,146 @@ th {
   min-width: 320px;
 }
 
+.attendance-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.15fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.fingerprint-monitor {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  align-items: center;
+  gap: 18px;
+}
+
+.fingerprint-visual {
+  position: relative;
+  display: grid;
+  width: 150px;
+  height: 190px;
+  place-items: center;
+  border-radius: 8px;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.fingerprint-visual::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(53, 194, 163, 0.24) 45%, transparent 90%);
+  transform: translateY(-100%);
+}
+
+.fingerprint-monitor.active .fingerprint-visual::before {
+  animation: fingerScan 1.4s ease-in-out infinite;
+}
+
+.fingerprint-visual span {
+  position: absolute;
+  border: 3px solid #35c2a3;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+
+.fingerprint-visual span:nth-child(1) {
+  width: 32px;
+  height: 48px;
+}
+
+.fingerprint-visual span:nth-child(2) {
+  width: 54px;
+  height: 74px;
+}
+
+.fingerprint-visual span:nth-child(3) {
+  width: 78px;
+  height: 104px;
+}
+
+.fingerprint-visual span:nth-child(4) {
+  width: 102px;
+  height: 132px;
+}
+
+.fingerprint-visual span:nth-child(5) {
+  width: 120px;
+  height: 156px;
+  border-left-color: transparent;
+}
+
+.fingerprint-visual span:nth-child(6) {
+  width: 14px;
+  height: 34px;
+  border-right-color: transparent;
+  transform: translateY(44px);
+}
+
+.finger-id {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  margin-top: 12px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #08735b;
+  background: #e8f7f3;
+}
+
+.event-list {
+  display: grid;
+  gap: 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.event-item {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.event-pulse {
+  width: 8px;
+  height: 38px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.event-item.success .event-pulse {
+  background: var(--success);
+}
+
+.event-item.warning .event-pulse {
+  background: var(--warning);
+}
+
+.event-item.danger .event-pulse {
+  background: var(--danger);
+}
+
+.event-time {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@keyframes fingerScan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
 .settings-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -512,6 +669,7 @@ dd {
   .nav,
   .stats-grid,
   .content-grid,
+  .attendance-grid,
   .form-grid,
   .settings-form,
   .modal-grid {
@@ -527,6 +685,10 @@ dd {
   .scan-form {
     width: 100%;
     min-width: 0;
+  }
+
+  .fingerprint-monitor {
+    grid-template-columns: 1fr;
   }
 }
 
