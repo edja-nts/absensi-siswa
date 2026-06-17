@@ -1,0 +1,45 @@
+#pragma once
+
+#define WIFI_SSID "NAMA_WIFI"
+#define WIFI_PASSWORD "PASSWORD_WIFI"
+#define BACKEND_URL "http://192.168.1.10:8080"
+
+#define BLYNK_TEMPLATE_ID "TMPL67t1bjQQr"
+#define BLYNK_TEMPLATE_NAME "Presensi SLB"
+#define BLYNK_AUTH_TOKEN "RzElXtyz9bjqAcBDtpV5Ah9ABPDUnFJf"
+
+#define BLYNK_VPIN_NAMA V0
+#define BLYNK_VPIN_ID V1
+#define BLYNK_VPIN_STATUS V2
+#define BLYNK_VPIN_JAM V3
+#define BLYNK_VPIN_TOTAL V4
+#define BLYNK_VPIN_SISA V8
+#define BLYNK_VPIN_RASIO V7
+#define BLYNK_VPIN_PERSEN V6
+
+#define LED_FLASH_PIN 4
+#define LED_ONBOARD 33
+
+#define CAM_QUALITY 12
+#define CAM_FRAMESIZE FRAMESIZE_QVGA
+
+#define PWDN_GPIO_NUM 32
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM 0
+#define SIOD_GPIO_NUM 26
+#define SIOC_GPIO_NUM 27
+#define Y9_GPIO_NUM 35
+#define Y8_GPIO_NUM 34
+#define Y7_GPIO_NUM 39
+#define Y6_GPIO_NUM 36
+#define Y5_GPIO_NUM 21
+#define Y4_GPIO_NUM 19
+#define Y3_GPIO_NUM 18
+#define Y2_GPIO_NUM 5
+#define VSYNC_GPIO_NUM 25
+#define HREF_GPIO_NUM 23
+#define PCLK_GPIO_NUM 22
+
+#define FP_RX_PIN 3
+#define FP_TX_PIN 12
+#define FP_BAUD 57600

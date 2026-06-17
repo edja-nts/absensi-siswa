@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Absensi Siswa SLB</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">AS</span>
+        <div>
+          <strong>Absensi SLB</strong>
+          <small>Fingerprint & ESP32-CAM</small>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Menu utama">
+        <button class="nav-item active" data-view="dashboard">Dashboard</button>
+        <button class="nav-item" data-view="students">Daftar</button>
+        <button class="nav-item" data-view="attendance">Absen</button>
+        <button class="nav-item" data-view="settings">Setting</button>
+        <button class="nav-item" data-view="camera">Live Cam</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="todayLabel">Hari ini</p>
+          <h1 id="viewTitle">Dashboard</h1>
+        </div>
+        <div class="top-actions">
+          <span class="status-dot"></span>
+          <span id="espStatus">ESP belum diset</span>
+        </div>
+      </header>
+
+      <section class="view active" id="dashboard">
+        <div class="stats-grid">
+          <article class="stat">
+            <span>Total Siswa</span>
+            <strong id="totalStudents">0</strong>
+          </article>
+          <article class="stat">
+            <span>Rasio Absen</span>
+            <strong id="ratio">0/0</strong>
+          </article>
+          <article class="stat">
+            <span>Persentase</span>
+            <strong id="percent">0%</strong>
+          </article>
+          <article class="stat danger-stat">
+            <span>Absen Ditolak</span>
+            <strong id="rejected">0</strong>
+          </article>
+        </div>
+
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Grafik Harian</h2>
+            </div>
+            <div class="chart" id="dailyChart"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Histori Hari Ini</h2>
+              <button class="ghost danger" id="clearHistoryBtn">Clear</button>
+            </div>
+            <div class="history-list" id="historyList"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="students">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Daftar Siswa</h2>
+            <button class="danger" id="clearStudentsBtn">Clear Data Siswa</button>
+          </div>
+
+          <form class="form-grid" id="studentForm">
+            <input type="hidden" id="studentId" />
+            <label>
+              Nama
+              <input id="name" required autocomplete="off" placeholder="Nama siswa" />
+            </label>
+            <label>
+              NIK
+              <input id="nik" autocomplete="off" placeholder="NIK / NISN" />
+            </label>
+            <label>
+              Kelas
+              <select id="className" required></select>
+            </label>
+            <label>
+              ID Finger
+              <input id="fingerprintId" required type="number" min="1" placeholder="Contoh: 21" />
+            </label>
+            <div class="form-actions">
+              <button type="button" class="ghost" id="resetFormBtn">Reset</button>
+              <button type="button" class="ghost" id="enrollSensorBtn">Enroll Sensor</button>
+              <button type="submit" id="saveStudentBtn">Simpan</button>
+            </div>
+          </form>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nama</th>
+                  <th>NIK</th>
+                  <th>Kelas</th>
+                  <th>ID Finger</th>
+                  <th>Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="studentRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="attendance">
+        <section class="panel scan-panel">
+          <div>
+            <h2>Absen Fingerprint</h2>
+            <p class="muted">Untuk uji coba web, masukkan ID finger lalu tekan scan. ESP32 bisa mengirim ke endpoint yang sama.</p>
+          </div>
+          <form class="scan-form" id="scanForm">
+            <input id="scanFingerprintId" type="number" min="1" required placeholder="ID Finger" />
+            <button type="submit">Scan</button>
+          </form>
+        </section>
+      </section>
+
+      <section class="view" id="settings">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Setting ESP32</h2>
+          </div>
+          <form class="form-grid settings-form" id="settingsForm">
+            <label>
+              SSID WiFi
+              <input id="wifi_ssid" placeholder="Nama hotspot" />
+            </label>
+            <label>
+              Password WiFi
+              <input id="wifi_password" type="password" placeholder="Password hotspot" />
+            </label>
+            <label>
+              IP Address ESP32
+              <input id="esp_ip" placeholder="192.168.1.20" />
+            </label>
+            <label>
+              URL Firmware OTA
+              <input id="firmware_url" placeholder="https://github.com/.../firmware.bin" />
+            </label>
+            <div class="form-actions">
+              <button type="submit">Simpan Setting</button>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <section class="view" id="camera">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Live Cam</h2>
+            <button class="ghost" id="reloadCamBtn">Muat Ulang</button>
+          </div>
+          <div class="camera-frame">
+            <img id="liveCam" alt="Live stream ESP32-CAM" />
+            <div class="camera-empty" id="cameraEmpty">Isi IP ESP32 di menu Setting untuk melihat stream.</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal" id="attendanceModal" aria-hidden="true">
+      <div class="modal-content">
+        <button class="modal-close" id="closeModalBtn" aria-label="Tutup">x</button>
+        <div class="modal-grid">
+          <div>
+            <p class="eyebrow">Data Absen</p>
+            <h2 id="modalName">Nama siswa</h2>
+            <dl>
+              <div><dt>NIK</dt><dd id="modalNik">-</dd></div>
+              <div><dt>Kelas</dt><dd id="modalClass">-</dd></div>
+              <div><dt>ID Finger</dt><dd id="modalFinger">-</dd></div>
+              <div><dt>Status</dt><dd id="modalStatus">-</dd></div>
+            </dl>
+          </div>
+          <div class="modal-camera">
+            <img id="modalCam" alt="Preview kamera" />
+            <span id="modalCamEmpty">Live camera belum tersedia</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
