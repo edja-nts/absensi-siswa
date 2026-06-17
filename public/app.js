@@ -665,10 +665,7 @@ function bindEvents() {
   qs('#settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const payload = {
-      wifi_ssid: qs('#wifi_ssid').value,
-      wifi_password: qs('#wifi_password').value,
-      esp_ip: qs('#esp_ip').value,
-      firmware_url: qs('#firmware_url').value
+      esp_ip: qs('#esp_ip').value
     };
     await api('/api/settings', { method: 'PUT', body: JSON.stringify(payload) });
     state.settings = await api('/api/settings');
@@ -692,7 +689,7 @@ async function init() {
   bindEvents();
   await loadAll();
   connectEventSocket();
-  ['wifi_ssid', 'wifi_password', 'esp_ip', 'firmware_url'].forEach((key) => {
+  ['esp_ip'].forEach((key) => {
     qs(`#${key}`).value = state.settings[key] || '';
   });
 }

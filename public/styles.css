@@ -644,13 +644,22 @@ th {
 .modal-camera {
   position: relative;
   display: grid;
-  min-height: 420px;
   place-items: center;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #111827;
   color: #d7deea;
+}
+
+.camera-frame {
+  width: min(100%, 640px);
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+}
+
+.modal-camera {
+  min-height: 420px;
 }
 
 .camera-frame img,
