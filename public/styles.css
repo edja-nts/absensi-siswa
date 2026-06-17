@@ -47,6 +47,16 @@ button:hover {
   background: var(--primary-dark);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  background: #98a2b3;
+}
+
+button:disabled:hover {
+  background: #98a2b3;
+}
+
 .ghost {
   color: var(--text);
   background: #eef3fa;
@@ -69,6 +79,8 @@ button:hover {
   position: sticky;
   top: 0;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 24px;
   background: #101828;
   color: #fff;
@@ -107,6 +119,33 @@ button:hover {
 .nav {
   display: grid;
   gap: 8px;
+}
+
+.version-stack {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.version-stack span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  width: fit-content;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: #d7deea;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.version-stack span.offline {
+  color: #ffb4b4;
+  border-color: rgba(255, 180, 180, 0.24);
+  background: rgba(223, 63, 64, 0.14);
 }
 
 .nav-item {
@@ -358,6 +397,53 @@ select:focus {
 .form-actions {
   display: flex;
   gap: 8px;
+}
+
+.enrollment-status {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.enrollment-status strong {
+  font-size: 14px;
+}
+
+.enrollment-status span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.enrollment-status.success {
+  border-color: rgba(22, 163, 111, 0.35);
+  background: #e8f7f3;
+}
+
+.enrollment-status.success strong {
+  color: #08735b;
+}
+
+.enrollment-status.danger {
+  border-color: rgba(223, 63, 64, 0.35);
+  background: #fdecec;
+}
+
+.enrollment-status.danger strong {
+  color: #a52828;
+}
+
+.enrollment-status.progress {
+  border-color: rgba(242, 165, 26, 0.4);
+  background: #fff7e6;
+}
+
+.enrollment-status.progress strong {
+  color: #9a6200;
 }
 
 .table-wrap {
@@ -664,6 +750,11 @@ dd {
   .sidebar {
     position: static;
     height: auto;
+  }
+
+  .version-stack {
+    display: flex;
+    flex-wrap: wrap;
   }
 
   .nav,

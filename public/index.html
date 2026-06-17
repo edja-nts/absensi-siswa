@@ -23,6 +23,11 @@
         <button class="nav-item" data-view="settings">Setting</button>
         <button class="nav-item" data-view="camera">Live Cam</button>
       </nav>
+
+      <div class="version-stack">
+        <span id="webVersion">Web v-</span>
+        <span id="firmwareVersion">FW v-</span>
+      </div>
     </aside>
 
     <main class="main">
@@ -104,9 +109,14 @@
             <div class="form-actions">
               <button type="button" class="ghost" id="resetFormBtn">Reset</button>
               <button type="button" class="ghost" id="enrollSensorBtn">Enroll Sensor</button>
-              <button type="submit" id="saveStudentBtn">Simpan</button>
+              <button type="submit" id="saveStudentBtn" disabled>Simpan</button>
             </div>
           </form>
+
+          <div class="enrollment-status waiting" id="enrollmentStatus">
+            <strong>Enrollment belum dilakukan</strong>
+            <span>Isi data siswa, masukkan ID finger, lalu tekan Enroll Sensor.</span>
+          </div>
 
           <div class="table-wrap">
             <table>

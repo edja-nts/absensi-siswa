@@ -10,6 +10,7 @@ const multer = require('multer');
 const { WebSocketServer, WebSocket } = require('ws');
 const db = require('./db');
 const { sendBlynkUpdate } = require('./blynk');
+const packageInfo = require('../package.json');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -119,6 +120,32 @@ function dashboardStats(date = today()) {
   };
 }
 
+function getSetting(key, fallback = '') {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || fallback;
+}
+
+async function notifyBlynkViaEsp32({ student, fingerprintId, stats }) {
+  const espIp = getSetting('esp_ip');
+  const result = await sendBlynkUpdate({
+    name: student?.name || '-',
+    fingerprintId,
+    status: 'Hadir',
+    time: nowTime(),
+    ...stats
+  }, espIp);
+
+  addEspEvent({
+    type: 'blynk',
+    status: result.ok ? 'success' : 'warning',
+    fingerprintId,
+    message: result.ok
+      ? `Data ${student?.name || `ID ${fingerprintId}`} terkirim ke Blynk.`
+      : `Blynk belum terkirim: ${result.reason || result.error || result.data?.message || 'ESP32 tidak merespons.'}`
+  });
+
+  return result;
+}
+
 function listAttendances(date = today(), limit = 80) {
   return db.prepare(`
     SELECT a.*, s.name, s.nik, s.class_name
@@ -166,13 +193,6 @@ function recordAttendance({ fingerprintId, photoPath = null, note = null }) {
   `).run(student ? student.id : null, fingerprintId, status, date, photoPath, note);
 
   const stats = dashboardStats(date);
-  sendBlynkUpdate({
-    name: student ? student.name : 'Ditolak',
-    fingerprintId,
-    status: student ? 'Hadir' : 'Ditolak',
-    time: nowTime(),
-    ...stats
-  });
 
   return {
     accepted: Boolean(student),
@@ -184,11 +204,15 @@ function recordAttendance({ fingerprintId, photoPath = null, note = null }) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'absensi-siswa', port: PORT });
+  res.json({ ok: true, service: 'absensi-siswa', version: packageInfo.version, port: PORT });
 });
 
 app.get('/api/meta', (_req, res) => {
-  res.json({ classOptions });
+  res.json({
+    classOptions,
+    version: packageInfo.version,
+    service: packageInfo.name
+  });
 });
 
 wss.on('connection', (socket) => {
@@ -301,6 +325,13 @@ app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
         ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
         : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
   });
+  if (result.accepted) {
+    notifyBlynkViaEsp32({
+      student: result.student,
+      fingerprintId,
+      stats: result.stats
+    });
+  }
   res.status(result.accepted ? 201 : 202).json(result);
 });
 
@@ -361,6 +392,13 @@ app.post('/api/esp32/scan', (req, res) => {
         ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
         : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
   });
+  if (result.accepted) {
+    notifyBlynkViaEsp32({
+      student: result.student,
+      fingerprintId,
+      stats: result.stats
+    });
+  }
   res.status(result.accepted ? 201 : 202).json({ ok: true, ...result });
 });
 

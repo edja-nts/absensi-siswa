@@ -1,40 +1,45 @@
-const VPINS = {
-  name: 'V0',
-  id: 'V1',
-  status: 'V2',
-  time: 'V3',
-  total: 'V4',
-  percent: 'V6',
-  ratio: 'V7',
-  remaining: 'V8'
-};
-
-async function sendBlynkUpdate(payload) {
-  if (process.env.BLYNK_ENABLED !== 'true' || !process.env.BLYNK_AUTH_TOKEN) {
-    return { skipped: true };
+async function sendBlynkUpdate(payload, espIp) {
+  if (!espIp) {
+    return { skipped: true, reason: 'IP ESP32 belum diset.' };
   }
 
-  const baseUrl = 'https://blynk.cloud/external/api/update';
-  const token = process.env.BLYNK_AUTH_TOKEN;
-  const entries = [
-    [VPINS.name, payload.name || '-'],
-    [VPINS.id, payload.fingerprintId || '-'],
-    [VPINS.status, payload.status || '-'],
-    [VPINS.time, payload.time || '-'],
-    [VPINS.total, payload.total ?? 0],
-    [VPINS.remaining, payload.remaining ?? 0],
-    [VPINS.ratio, payload.ratio || '0/0'],
-    [VPINS.percent, payload.percent ?? 0]
-  ];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  const body = new URLSearchParams({
+    name: payload.name || '-',
+    fingerprintId: String(payload.fingerprintId || '-'),
+    status: payload.status || '-',
+    time: payload.time || '-',
+    total: String(payload.total ?? 0),
+    remaining: String(payload.remaining ?? 0),
+    ratio: payload.ratio || '0/0',
+    percent: String(payload.percent ?? 0)
+  });
 
-  await Promise.all(
-    entries.map(([pin, value]) => {
-      const url = `${baseUrl}?token=${encodeURIComponent(token)}&${pin}=${encodeURIComponent(value)}`;
-      return fetch(url).catch((error) => ({ error: error.message }));
-    })
-  );
+  try {
+    const response = await fetch(`http://${espIp}/blynk/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
 
-  return { skipped: false };
+    return {
+      skipped: false,
+      ok: response.ok,
+      status: response.status,
+      data
+    };
+  } catch (error) {
+    return {
+      skipped: false,
+      ok: false,
+      error: error.name === 'AbortError' ? 'Timeout menghubungi ESP32.' : error.message
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 module.exports = { sendBlynkUpdate };

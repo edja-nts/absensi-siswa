@@ -177,6 +177,50 @@ void sendScanToBackend(int fingerprintId) {
   http.end();
 }
 
+String argOrDefault(const char *name, const char *fallback) {
+  if (server.hasArg(name)) return server.arg(name);
+  return String(fallback);
+}
+
+void handleBlynkUpdate() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"ok\":false,\"message\":\"ESP32 belum konek internet\"}");
+    return;
+  }
+
+  if (!Blynk.connected()) {
+    Blynk.connect(2500);
+  }
+
+  if (!Blynk.connected()) {
+    server.send(503, "application/json", "{\"ok\":false,\"message\":\"Blynk belum terkoneksi\"}");
+    return;
+  }
+
+  String name = argOrDefault("name", "-");
+  String id = argOrDefault("fingerprintId", "-");
+  String status = argOrDefault("status", "-");
+  String time = argOrDefault("time", "-");
+  String total = argOrDefault("total", "0");
+  String remaining = argOrDefault("remaining", "0");
+  String ratio = argOrDefault("ratio", "0/0");
+  String percent = argOrDefault("percent", "0");
+
+  Blynk.virtualWrite(BLYNK_VPIN_NAMA, name);
+  Blynk.virtualWrite(BLYNK_VPIN_ID, id);
+  Blynk.virtualWrite(BLYNK_VPIN_STATUS, status);
+  Blynk.virtualWrite(BLYNK_VPIN_JAM, time);
+  Blynk.virtualWrite(BLYNK_VPIN_TOTAL, total);
+  Blynk.virtualWrite(BLYNK_VPIN_SISA, remaining);
+  Blynk.virtualWrite(BLYNK_VPIN_RASIO, ratio);
+  Blynk.virtualWrite(BLYNK_VPIN_PERSEN, percent);
+
+  Serial.printf("[BLYNK] %s ID %s %s %s%%\n", name.c_str(), id.c_str(), ratio.c_str(), percent.c_str());
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 void handleJpg() {
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
@@ -239,7 +283,10 @@ void handleStream() {
 void setupRoutes() {
   server.on("/", []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"device\":\"esp32cam\",\"status\":\"ok\"}");
+    String body = "{\"device\":\"esp32cam\",\"status\":\"ok\",\"version\":\"";
+    body += APP_VERSION;
+    body += "\"}";
+    server.send(200, "application/json", body);
   });
   server.on("/enroll", HTTP_GET, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -259,6 +306,8 @@ void setupRoutes() {
   });
   server.on("/jpg", HTTP_GET, handleJpg);
   server.on("/stream", HTTP_GET, handleStream);
+  server.on("/blynk/update", HTTP_POST, handleBlynkUpdate);
+  server.on("/blynk/update", HTTP_GET, handleBlynkUpdate);
   server.begin();
 }
 
@@ -303,6 +352,9 @@ void setup() {
   initFingerprint();
   setupRoutes();
   Blynk.config(BLYNK_AUTH_TOKEN);
+  if (WiFi.status() == WL_CONNECTED) {
+    Blynk.connect(3000);
+  }
 }
 
 void loop() {

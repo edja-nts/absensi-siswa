@@ -7,7 +7,14 @@ const state = {
   lastEventId: null,
   ws: null,
   wsReconnectTimer: null,
-  fallbackTimer: null
+  fallbackTimer: null,
+  enrollment: {
+    fingerprintId: null,
+    status: 'idle',
+    originalFingerprintId: null
+  },
+  version: '-',
+  firmwareVersion: '-'
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -136,6 +143,29 @@ function setRealtimeStatus(connected) {
   el.classList.toggle('offline', !connected);
 }
 
+function renderVersions() {
+  qs('#webVersion').textContent = `Web v${state.version || '-'}`;
+  qs('#firmwareVersion').textContent = `FW v${state.firmwareVersion || '-'}`;
+  qs('#firmwareVersion').classList.toggle('offline', !state.firmwareVersion || state.firmwareVersion === '-');
+}
+
+async function refreshFirmwareVersion() {
+  const ip = state.settings.esp_ip;
+  state.firmwareVersion = '-';
+  renderVersions();
+
+  if (!ip) return;
+
+  try {
+    const response = await fetch(`http://${ip}/`, { cache: 'no-store' });
+    const data = await response.json();
+    state.firmwareVersion = data.version || '-';
+  } catch (_error) {
+    state.firmwareVersion = '-';
+  }
+  renderVersions();
+}
+
 function renderEspEvents() {
   const latest = state.espEvents[0];
   const list = qs('#espEventList');
@@ -179,6 +209,83 @@ function renderEspEvents() {
     : '<p class="muted">Belum ada aktivitas sensor.</p>';
 }
 
+function currentFingerprintId() {
+  return Number(qs('#fingerprintId')?.value || 0);
+}
+
+function enrollmentAllowsSave() {
+  const id = qs('#studentId')?.value;
+  const fingerprintId = currentFingerprintId();
+  const unchangedExistingFinger = Boolean(id)
+    && fingerprintId > 0
+    && fingerprintId === state.enrollment.originalFingerprintId;
+
+  return unchangedExistingFinger
+    || (state.enrollment.status === 'success' && state.enrollment.fingerprintId === fingerprintId);
+}
+
+function setEnrollmentStatus(status, title, detail, fingerprintId = currentFingerprintId()) {
+  const el = qs('#enrollmentStatus');
+  if (!el) return;
+
+  state.enrollment.status = status;
+  state.enrollment.fingerprintId = fingerprintId || null;
+  el.className = `enrollment-status ${status === 'idle' ? 'waiting' : status}`;
+  el.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+  qs('#saveStudentBtn').disabled = !enrollmentAllowsSave();
+}
+
+function resetEnrollmentStatus() {
+  state.enrollment.fingerprintId = null;
+  state.enrollment.status = 'idle';
+  state.enrollment.originalFingerprintId = null;
+  setEnrollmentStatus(
+    'idle',
+    'Enrollment belum dilakukan',
+    'Isi data siswa, masukkan ID finger, lalu tekan Enroll Sensor.'
+  );
+}
+
+function updateSaveButtonState() {
+  qs('#saveStudentBtn').disabled = !enrollmentAllowsSave();
+}
+
+function handleEnrollmentEvent(event) {
+  if (event?.type !== 'enroll') return;
+  const activeFingerId = currentFingerprintId();
+  if (!event.fingerprintId || event.fingerprintId !== activeFingerId) return;
+
+  if (event.status === 'success') {
+    setEnrollmentStatus(
+      'success',
+      `Enrollment ID ${event.fingerprintId} berhasil`,
+      'Data siswa sudah bisa disimpan.',
+      event.fingerprintId
+    );
+    return;
+  }
+
+  if (event.status === 'danger') {
+    setEnrollmentStatus(
+      'danger',
+      `Enrollment ID ${event.fingerprintId} gagal`,
+      event.message,
+      event.fingerprintId
+    );
+    return;
+  }
+
+  setEnrollmentStatus(
+    'progress',
+    `Enrollment ID ${event.fingerprintId} sedang diproses`,
+    event.message,
+    event.fingerprintId
+  );
+}
+
 function mergeEspEvent(event) {
   if (!event?.id) return false;
   const isNew = !state.espEvents.some((item) => item.id === event.id);
@@ -186,6 +293,7 @@ function mergeEspEvent(event) {
     state.espEvents = [event, ...state.espEvents].slice(0, 40);
     state.lastEventId = event.id;
     renderEspEvents();
+    handleEnrollmentEvent(event);
     toast(event.message);
   }
   return isNew;
@@ -307,6 +415,7 @@ function resetStudentForm() {
   qs('#studentId').value = '';
   qs('#studentForm').reset();
   qs('#saveStudentBtn').textContent = 'Simpan';
+  resetEnrollmentStatus();
 }
 
 function editStudent(id) {
@@ -318,6 +427,13 @@ function editStudent(id) {
   qs('#className').value = student.className;
   qs('#fingerprintId').value = student.fingerprintId;
   qs('#saveStudentBtn').textContent = 'Update';
+  state.enrollment.originalFingerprintId = Number(student.fingerprintId);
+  setEnrollmentStatus(
+    'success',
+    `ID ${student.fingerprintId} sudah terdaftar`,
+    'Data siswa lama bisa diperbarui. Jika ID finger diganti, lakukan enrollment ulang.',
+    Number(student.fingerprintId)
+  );
 }
 
 function updateEspStatus() {
@@ -377,6 +493,7 @@ async function loadAll() {
   ]);
 
   state.classOptions = meta.classOptions;
+  state.version = meta.version || '-';
   state.students = students;
   state.settings = settings;
   state.dashboard = dashboard;
@@ -390,6 +507,8 @@ async function loadAll() {
   renderHistory();
   renderEspEvents();
   updateEspStatus();
+  renderVersions();
+  refreshFirmwareVersion();
 }
 
 function bindEvents() {
@@ -397,6 +516,15 @@ function bindEvents() {
 
   qs('#studentForm').addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (!enrollmentAllowsSave()) {
+      setEnrollmentStatus(
+        'danger',
+        'Simpan belum bisa dilakukan',
+        'Enrollment fingerprint harus berhasil lebih dulu untuk ID finger ini.'
+      );
+      return;
+    }
+
     const id = qs('#studentId').value;
     const payload = {
       name: qs('#name').value,
@@ -433,6 +561,27 @@ function bindEvents() {
 
   qs('#resetFormBtn').addEventListener('click', resetStudentForm);
 
+  qs('#fingerprintId').addEventListener('input', () => {
+    const id = qs('#studentId').value;
+    const fingerprintId = currentFingerprintId();
+    if (id && fingerprintId === state.enrollment.originalFingerprintId) {
+      setEnrollmentStatus(
+        'success',
+        `ID ${fingerprintId} sudah terdaftar`,
+        'Data siswa lama bisa diperbarui. Jika ID finger diganti, lakukan enrollment ulang.',
+        fingerprintId
+      );
+      return;
+    }
+
+    setEnrollmentStatus(
+      'idle',
+      'Enrollment belum dilakukan',
+      'ID finger berubah, lakukan enrollment sensor sebelum menyimpan.',
+      fingerprintId
+    );
+  });
+
   qs('#enrollSensorBtn').addEventListener('click', async () => {
     const ip = state.settings.esp_ip;
     const fingerprintId = Number(qs('#fingerprintId').value);
@@ -450,12 +599,24 @@ function bindEvents() {
       fingerprintId,
       message: 'Mulai enrollment. Tempelkan jari ke sensor.'
     });
+    setEnrollmentStatus(
+      'progress',
+      `Enrollment ID ${fingerprintId} sedang diproses`,
+      'Tempelkan jari ke sensor dan ikuti instruksi di panel Sensor Fingerprint.',
+      fingerprintId
+    );
     toast('Lihat panel Sensor Fingerprint untuk instruksi.');
 
     try {
       const response = await fetch(`http://${ip}/enroll?id=${fingerprintId}`, { cache: 'no-store' });
       const result = await response.json().catch(() => ({ ok: false }));
       if (!response.ok || !result.ok) throw new Error(result.message || 'Enrollment sensor gagal.');
+      setEnrollmentStatus(
+        'success',
+        `Enrollment ID ${fingerprintId} berhasil`,
+        'Data siswa sudah bisa disimpan.',
+        fingerprintId
+      );
       toast('Enrollment sensor berhasil.');
     } catch (error) {
       await addLocalEspEvent({
@@ -514,6 +675,7 @@ function bindEvents() {
     toast('Setting disimpan.');
     updateEspStatus();
     refreshCamera();
+    refreshFirmwareVersion();
   });
 
   qs('#reloadCamBtn').addEventListener('click', refreshCamera);
