@@ -17,7 +17,7 @@ const defaults = [
   ['esp_ip', ''],
   ['wifi_ssid', ''],
   ['wifi_password', ''],
-  ['firmware_url', 'https://github.com/edja-nts/absensi-siswa/releases/latest/download/firmware.bin']
+  ['firmware_url', '']
 ];
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
