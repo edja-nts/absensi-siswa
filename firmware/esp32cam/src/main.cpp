@@ -14,6 +14,13 @@ SemaphoreHandle_t fpMutex = NULL;
 TaskHandle_t fingerTaskHandle = NULL;
 volatile bool enrolling = false;
 volatile bool fingerprintReady = false;
+unsigned long lastWifiAttemptAt = 0;
+unsigned long lastBlynkAttemptAt = 0;
+unsigned long lastWifiLogAt = 0;
+bool wifiWasConnected = false;
+
+const unsigned long WIFI_RECONNECT_INTERVAL_MS = 10000;
+const unsigned long BLYNK_RECONNECT_INTERVAL_MS = 7000;
 
 void setOnboardLed(bool on) {
   digitalWrite(LED_ONBOARD, on ? LOW : HIGH);
@@ -249,7 +256,7 @@ void handleBlynkUpdate() {
   }
 
   if (!Blynk.connected()) {
-    Blynk.connect(2500);
+    Blynk.connect(800);
   }
 
   if (!Blynk.connected()) {
@@ -345,7 +352,15 @@ void setupRoutes() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     String body = "{\"device\":\"esp32cam\",\"status\":\"ok\",\"version\":\"";
     body += APP_VERSION;
-    body += "\"}";
+    body += "\",\"apIp\":\"";
+    body += WiFi.softAPIP().toString();
+    body += "\",\"staConnected\":";
+    body += (WiFi.status() == WL_CONNECTED ? "true" : "false");
+    body += ",\"staIp\":\"";
+    body += (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "");
+    body += "\",\"blynkConnected\":";
+    body += (Blynk.connected() ? "true" : "false");
+    body += "}";
     server.send(200, "application/json", body);
   });
   server.on("/enroll", HTTP_GET, []() {
@@ -377,6 +392,8 @@ void connectWifi() {
   IPAddress subnet(255, 255, 255, 0);
 
   WiFi.mode(WIFI_AP_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.softAPConfig(apIP, gateway, subnet);
   bool apOk = WiFi.softAP(AP_SSID, AP_PASSWORD);
 
@@ -385,18 +402,55 @@ void connectWifi() {
   Serial.println("[AP] Set IP laptop manual ke 192.168.4.2, subnet 255.255.255.0");
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.printf("[WiFi] Menghubungkan ke %s", WIFI_SSID);
+  lastWifiAttemptAt = millis();
+  Serial.printf("[WiFi] Auto-connect ke %s berjalan non-blocking\n", WIFI_SSID);
+  Serial.println("[WiFi] Jika hotspot belum aktif, sistem lokal tetap berjalan dan akan reconnect otomatis.");
+}
 
-  unsigned long startedAt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startedAt < 20000) {
-    delay(500);
-    Serial.print(".");
+void maintainWifiClient() {
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const unsigned long now = millis();
+
+  if (connected) {
+    if (!wifiWasConnected) {
+      Serial.printf("[WiFi] Terhubung. IP STA: %s\n", WiFi.localIP().toString().c_str());
+    }
+    wifiWasConnected = true;
+    return;
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n[WiFi] Terhubung. IP STA: %s\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial.println("\n[WiFi] Gagal konek ke hotspot HP. AP lokal tetap aktif.");
+  if (wifiWasConnected) {
+    Serial.println("[WiFi] Hotspot terputus. AP lokal tetap aktif, mencoba reconnect otomatis.");
+    Blynk.disconnect();
+  }
+  wifiWasConnected = false;
+
+  if (now - lastWifiLogAt >= 15000) {
+    Serial.printf("[WiFi] Belum terkoneksi ke %s. Sistem lokal tetap aktif.\n", WIFI_SSID);
+    lastWifiLogAt = now;
+  }
+
+  if (now - lastWifiAttemptAt >= WIFI_RECONNECT_INTERVAL_MS) {
+    Serial.printf("[WiFi] Reconnect ke %s...\n", WIFI_SSID);
+    WiFi.disconnect(false, false);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    lastWifiAttemptAt = now;
+  }
+}
+
+void maintainBlynk() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  if (Blynk.connected()) {
+    Blynk.run();
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (now - lastBlynkAttemptAt >= BLYNK_RECONNECT_INTERVAL_MS) {
+    Serial.println("[BLYNK] Mencoba konek ulang...");
+    Blynk.connect(800);
+    lastBlynkAttemptAt = now;
   }
 }
 
@@ -414,9 +468,6 @@ void setup() {
   initFingerprint();
   setupRoutes();
   Blynk.config(BLYNK_AUTH_TOKEN);
-  if (WiFi.status() == WL_CONNECTED) {
-    Blynk.connect(3000);
-  }
 
   xTaskCreatePinnedToCore(
     fingerTask,
@@ -431,7 +482,8 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  Blynk.run();
+  maintainWifiClient();
+  maintainBlynk();
 
   delay(80);
 }
