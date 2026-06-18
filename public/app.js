@@ -10,6 +10,7 @@ const state = {
   fallbackTimer: null,
   cameraTimer: null,
   captureTimer: null,
+  modalCloseTimer: null,
   captureAttendanceId: null,
   enrollment: {
     fingerprintId: null,
@@ -410,6 +411,12 @@ function clearCaptureTimer() {
   state.captureTimer = null;
 }
 
+function clearModalCloseTimer() {
+  if (!state.modalCloseTimer) return;
+  window.clearTimeout(state.modalCloseTimer);
+  state.modalCloseTimer = null;
+}
+
 async function addLocalEspEvent(event) {
   const result = await api('/api/esp32/events', {
     method: 'POST',
@@ -583,6 +590,7 @@ function stopLiveCamera() {
 }
 
 function showAttendanceModal(result) {
+  clearModalCloseTimer();
   const student = result.student || {};
   const accepted = result.accepted && !result.duplicate;
   qs('#modalName').textContent = student.name || (result.duplicate ? student.name : 'Fingerprint tidak dikenal');
@@ -607,6 +615,15 @@ function showAttendanceModal(result) {
   qs('#attendanceModal').setAttribute('aria-hidden', 'false');
 }
 
+function closeAttendanceModal() {
+  clearCaptureTimer();
+  clearModalCloseTimer();
+  state.captureAttendanceId = null;
+  setCaptureStatus('', '', false);
+  qs('#attendanceModal').classList.remove('show');
+  qs('#attendanceModal').setAttribute('aria-hidden', 'true');
+}
+
 async function showAttendanceCapture(result) {
   const attendanceId = result.attendance?.id;
   if (attendanceId && state.captureAttendanceId === attendanceId) return;
@@ -616,6 +633,7 @@ async function showAttendanceCapture(result) {
 
   if (!result.accepted || result.duplicate || !attendanceId) {
     setCaptureStatus('', '', false);
+    state.modalCloseTimer = window.setTimeout(closeAttendanceModal, 2600);
     return;
   }
 
@@ -643,7 +661,7 @@ async function showAttendanceCapture(result) {
       toast('Foto absensi tersimpan.');
       await refreshDashboard();
       state.captureAttendanceId = null;
-      window.setTimeout(() => setCaptureStatus('', '', false), 1600);
+      state.modalCloseTimer = window.setTimeout(closeAttendanceModal, 1600);
     } catch (error) {
       setCaptureStatus('!', error.message);
       state.captureAttendanceId = null;
@@ -852,10 +870,7 @@ function bindEvents() {
   qs('#reloadCamBtn').addEventListener('click', refreshCamera);
 
   qs('#closeModalBtn').addEventListener('click', () => {
-    clearCaptureTimer();
-    state.captureAttendanceId = null;
-    qs('#attendanceModal').classList.remove('show');
-    qs('#attendanceModal').setAttribute('aria-hidden', 'true');
+    closeAttendanceModal();
   });
 }
 
