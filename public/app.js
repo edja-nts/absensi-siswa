@@ -11,6 +11,7 @@ const state = {
   cameraTimer: null,
   captureTimer: null,
   modalCloseTimer: null,
+  espStatusTimer: null,
   captureAttendanceId: null,
   enrollment: {
     fingerprintId: null,
@@ -19,6 +20,9 @@ const state = {
   },
   version: '-',
   firmwareVersion: '-',
+  espOnline: false,
+  espStaConnected: false,
+  blynkConnected: false,
   selectedDate: ''
 };
 
@@ -195,25 +199,45 @@ function setRealtimeStatus(connected) {
 
 function renderVersions() {
   qs('#webVersion').textContent = `Web v${state.version || '-'}`;
-  qs('#firmwareVersion').textContent = `FW v${state.firmwareVersion || '-'}`;
-  qs('#firmwareVersion').classList.toggle('offline', !state.firmwareVersion || state.firmwareVersion === '-');
+  const firmware = state.espOnline ? `FW v${state.firmwareVersion || '-'}` : 'ESP32 offline';
+  let blynk = '';
+  if (state.espOnline) {
+    blynk = state.espStaConnected && state.blynkConnected
+      ? ' | Blynk online'
+      : ' | Blynk offline';
+  }
+  qs('#firmwareVersion').textContent = `${firmware}${blynk}`;
+  qs('#firmwareVersion').classList.toggle('offline', !state.espOnline || !state.espStaConnected || !state.blynkConnected);
 }
 
 async function refreshFirmwareVersion() {
   const ip = state.settings.esp_ip;
-  state.firmwareVersion = '-';
-  renderVersions();
 
-  if (!ip) return;
+  if (!ip) {
+    state.firmwareVersion = '-';
+    state.espOnline = false;
+    state.espStaConnected = false;
+    state.blynkConnected = false;
+    renderVersions();
+    updateEspStatus();
+    return;
+  }
 
   try {
     const response = await fetch(`http://${ip}/`, { cache: 'no-store' });
     const data = await response.json();
+    state.espOnline = true;
     state.firmwareVersion = data.version || '-';
+    state.espStaConnected = Boolean(data.staConnected);
+    state.blynkConnected = Boolean(data.blynkConnected);
   } catch (_error) {
     state.firmwareVersion = '-';
+    state.espOnline = false;
+    state.espStaConnected = false;
+    state.blynkConnected = false;
   }
   renderVersions();
+  updateEspStatus();
 }
 
 function renderEspEvents() {
@@ -557,8 +581,21 @@ function editStudent(id) {
 
 function updateEspStatus() {
   const ip = state.settings.esp_ip;
-  qs('#espStatus').textContent = ip ? `ESP32: ${ip}` : 'ESP belum diset';
-  qs('.status-dot').style.background = ip ? '#16a36f' : '#f2a51a';
+  let label = 'ESP belum diset';
+  let color = '#f2a51a';
+
+  if (ip && state.espOnline) {
+    label = state.espStaConnected
+      ? `ESP32: ${ip} | Internet OK`
+      : `ESP32: ${ip} | Blynk terputus`;
+    color = state.espStaConnected ? '#16a36f' : '#f2a51a';
+  } else if (ip) {
+    label = `ESP32: ${ip} | Offline`;
+    color = '#e44848';
+  }
+
+  qs('#espStatus').textContent = label;
+  qs('.status-dot').style.background = color;
 }
 
 function refreshCamera() {
@@ -587,6 +624,11 @@ function stopLiveCamera() {
   if (!state.cameraTimer) return;
   window.clearInterval(state.cameraTimer);
   state.cameraTimer = null;
+}
+
+function startEspStatusMonitor() {
+  if (state.espStatusTimer) window.clearInterval(state.espStatusTimer);
+  state.espStatusTimer = window.setInterval(refreshFirmwareVersion, 7000);
 }
 
 function showAttendanceModal(result) {
@@ -880,6 +922,7 @@ async function init() {
   bindEvents();
   await loadAll();
   connectEventSocket();
+  startEspStatusMonitor();
   ['esp_ip'].forEach((key) => {
     qs(`#${key}`).value = state.settings[key] || '';
   });
