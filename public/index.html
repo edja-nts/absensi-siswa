@@ -23,6 +23,11 @@
         <button class="nav-item" data-view="settings">Setting</button>
         <button class="nav-item" data-view="camera">Live Cam</button>
       </nav>
+
+      <div class="version-stack">
+        <span id="webVersion">Web v-</span>
+        <span id="firmwareVersion">FW v-</span>
+      </div>
     </aside>
 
     <main class="main">
@@ -61,14 +66,20 @@
         <div class="content-grid">
           <section class="panel">
             <div class="panel-head">
-              <h2>Grafik Harian</h2>
+              <h2>Grafik Kehadiran</h2>
+              <div class="panel-actions">
+                <label class="compact-field">
+                  Tanggal
+                  <input id="dashboardDate" type="date" />
+                </label>
+              </div>
             </div>
             <div class="chart" id="dailyChart"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
-              <h2>Histori Hari Ini</h2>
+              <h2 id="historyTitle">Histori</h2>
               <button class="ghost danger" id="clearHistoryBtn">Clear</button>
             </div>
             <div class="history-list" id="historyList"></div>
@@ -104,9 +115,14 @@
             <div class="form-actions">
               <button type="button" class="ghost" id="resetFormBtn">Reset</button>
               <button type="button" class="ghost" id="enrollSensorBtn">Enroll Sensor</button>
-              <button type="submit" id="saveStudentBtn">Simpan</button>
+              <button type="submit" id="saveStudentBtn" disabled>Simpan</button>
             </div>
           </form>
+
+          <div class="enrollment-status waiting" id="enrollmentStatus">
+            <strong>Enrollment belum dilakukan</strong>
+            <span>Isi data siswa, masukkan ID finger, lalu tekan Enroll Sensor.</span>
+          </div>
 
           <div class="table-wrap">
             <table>
@@ -177,20 +193,8 @@
           </div>
           <form class="form-grid settings-form" id="settingsForm">
             <label>
-              SSID WiFi
-              <input id="wifi_ssid" placeholder="Nama hotspot" />
-            </label>
-            <label>
-              Password WiFi
-              <input id="wifi_password" type="password" placeholder="Password hotspot" />
-            </label>
-            <label>
               IP Address ESP32
-              <input id="esp_ip" placeholder="192.168.1.20" />
-            </label>
-            <label>
-              URL Firmware OTA
-              <input id="firmware_url" placeholder="https://github.com/.../firmware.bin" />
+              <input id="esp_ip" placeholder="192.168.4.1" />
             </label>
             <div class="form-actions">
               <button type="submit">Simpan Setting</button>
@@ -230,6 +234,10 @@
           <div class="modal-camera">
             <img id="modalCam" alt="Preview kamera" />
             <span id="modalCamEmpty">Live camera belum tersedia</span>
+            <div class="capture-countdown" id="captureCountdown" hidden>
+              <strong id="captureCount">3</strong>
+              <span id="captureText">Bersiap ambil foto</span>
+            </div>
           </div>
         </div>
       </div>

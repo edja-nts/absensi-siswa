@@ -85,11 +85,12 @@ Masukkan IP ESP32 di menu Setting web agar live camera tampil di dashboard dan p
 
 ## Blynk
 
-Token dan virtual pin mengikuti brief di `codex.md`. Untuk mengaktifkan kirim data dari backend:
+Token dan virtual pin mengikuti brief di `codex.md` dan disimpan di firmware ESP32 pada `firmware/esp32cam/include/config.h`.
 
-```env
-BLYNK_ENABLED=true
-BLYNK_AUTH_TOKEN=token_blynk
+Saat absensi berhasil, backend mengirim data siswa dan statistik ke ESP32 melalui:
+
+```text
+http://IP_ESP32/blynk/update
 ```
 
-Secara default Blynk dimatikan agar development lokal tidak langsung mengirim request eksternal.
+ESP32 lalu meneruskan data ke Blynk dengan `Blynk.virtualWrite`. Pastikan IP ESP32 di menu Setting web berisi `192.168.4.1`.

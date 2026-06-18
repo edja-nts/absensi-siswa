@@ -10,6 +10,23 @@
 WebServer server(80);
 HardwareSerial mySerial(1);
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
+SemaphoreHandle_t fpMutex = NULL;
+TaskHandle_t fingerTaskHandle = NULL;
+volatile bool enrolling = false;
+volatile bool fingerprintReady = false;
+
+void setOnboardLed(bool on) {
+  digitalWrite(LED_ONBOARD, on ? LOW : HIGH);
+}
+
+void blinkOnboardLed(uint8_t count, uint16_t onMs = 120, uint16_t offMs = 120) {
+  for (uint8_t i = 0; i < count; i++) {
+    setOnboardLed(true);
+    delay(onMs);
+    setOnboardLed(false);
+    delay(offMs);
+  }
+}
 
 bool initCamera() {
   camera_config_t cfg;
@@ -66,9 +83,11 @@ bool initFingerprint() {
   finger.begin(FP_BAUD);
   if (finger.verifyPassword()) {
     Serial.printf("[FP] OK! Kapasitas: %d\n", finger.capacity);
+    fingerprintReady = true;
     return true;
   }
   Serial.println("[FP] Sensor tidak ditemukan");
+  fingerprintReady = false;
   return false;
 }
 
@@ -124,7 +143,7 @@ bool failEnroll(uint8_t id, const char *message) {
   return false;
 }
 
-bool enrollFP(uint8_t id) {
+bool enrollFPUnlocked(uint8_t id) {
   int p = -1;
   Serial.printf("[FP] Mulai enrollment ID %d\n", id);
   sendEventToBackend("enroll", "info", "Mulai enrollment sidik jari", id);
@@ -158,6 +177,23 @@ bool enrollFP(uint8_t id) {
   return true;
 }
 
+bool enrollFP(uint8_t id) {
+  if (!fingerprintReady || !fpMutex) {
+    return failEnroll(id, "Sensor fingerprint belum siap");
+  }
+
+  enrolling = true;
+  if (xSemaphoreTake(fpMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    enrolling = false;
+    return failEnroll(id, "Sensor fingerprint sedang sibuk");
+  }
+
+  bool ok = enrollFPUnlocked(id);
+  xSemaphoreGive(fpMutex);
+  enrolling = false;
+  return ok;
+}
+
 void sendScanToBackend(int fingerprintId) {
   sendEventToBackend("scan", "info", "Sidik jari terbaca oleh sensor", fingerprintId);
 
@@ -175,6 +211,72 @@ void sendScanToBackend(int fingerprintId) {
   String response = http.getString();
   Serial.printf("[API] Scan %d -> HTTP %d %s\n", fingerprintId, code, response.c_str());
   http.end();
+}
+
+void fingerTask(void *parameter) {
+  (void)parameter;
+
+  for (;;) {
+    if (fingerprintReady && !enrolling && fpMutex && xSemaphoreTake(fpMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+      int fingerId = scanFP();
+      xSemaphoreGive(fpMutex);
+
+      if (fingerId > 0) {
+        setOnboardLed(true);
+        Serial.printf("[FP] Terdeteksi ID %d\n", fingerId);
+        sendScanToBackend(fingerId);
+        setOnboardLed(false);
+        blinkOnboardLed(2, 70, 70);
+        vTaskDelay(pdMS_TO_TICKS(1600));
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(80));
+  }
+}
+
+String argOrDefault(const char *name, const char *fallback) {
+  if (server.hasArg(name)) return server.arg(name);
+  return String(fallback);
+}
+
+void handleBlynkUpdate() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+
+  if (WiFi.status() != WL_CONNECTED) {
+    server.send(503, "application/json", "{\"ok\":false,\"message\":\"ESP32 belum konek internet\"}");
+    return;
+  }
+
+  if (!Blynk.connected()) {
+    Blynk.connect(2500);
+  }
+
+  if (!Blynk.connected()) {
+    server.send(503, "application/json", "{\"ok\":false,\"message\":\"Blynk belum terkoneksi\"}");
+    return;
+  }
+
+  String name = argOrDefault("name", "-");
+  String id = argOrDefault("fingerprintId", "-");
+  String status = argOrDefault("status", "-");
+  String time = argOrDefault("time", "-");
+  String total = argOrDefault("total", "0");
+  String remaining = argOrDefault("remaining", "0");
+  String ratio = argOrDefault("ratio", "0/0");
+  String percent = argOrDefault("percent", "0");
+
+  Blynk.virtualWrite(BLYNK_VPIN_NAMA, name);
+  Blynk.virtualWrite(BLYNK_VPIN_ID, id);
+  Blynk.virtualWrite(BLYNK_VPIN_STATUS, status);
+  Blynk.virtualWrite(BLYNK_VPIN_JAM, time);
+  Blynk.virtualWrite(BLYNK_VPIN_TOTAL, total);
+  Blynk.virtualWrite(BLYNK_VPIN_SISA, remaining);
+  Blynk.virtualWrite(BLYNK_VPIN_RASIO, ratio);
+  Blynk.virtualWrite(BLYNK_VPIN_PERSEN, percent);
+
+  Serial.printf("[BLYNK] %s ID %s %s %s%%\n", name.c_str(), id.c_str(), ratio.c_str(), percent.c_str());
+  server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleJpg() {
@@ -210,7 +312,8 @@ void handleStream() {
   client.print("Cache-Control: no-cache\r\n");
   client.print("Connection: close\r\n\r\n");
 
-  while (client.connected()) {
+  int frameCount = 0;
+  while (client.connected() && frameCount < 40) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) break;
 
@@ -231,6 +334,7 @@ void handleStream() {
     client.write(jpgBuf, jpgLen);
     client.print("\r\n");
     free(jpgBuf);
+    frameCount++;
 
     delay(120);
   }
@@ -239,7 +343,10 @@ void handleStream() {
 void setupRoutes() {
   server.on("/", []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"device\":\"esp32cam\",\"status\":\"ok\"}");
+    String body = "{\"device\":\"esp32cam\",\"status\":\"ok\",\"version\":\"";
+    body += APP_VERSION;
+    body += "\"}";
+    server.send(200, "application/json", body);
   });
   server.on("/enroll", HTTP_GET, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -259,6 +366,8 @@ void setupRoutes() {
   });
   server.on("/jpg", HTTP_GET, handleJpg);
   server.on("/stream", HTTP_GET, handleStream);
+  server.on("/blynk/update", HTTP_POST, handleBlynkUpdate);
+  server.on("/blynk/update", HTTP_GET, handleBlynkUpdate);
   server.begin();
 }
 
@@ -296,27 +405,33 @@ void setup() {
   pinMode(LED_FLASH_PIN, OUTPUT);
   pinMode(LED_ONBOARD, OUTPUT);
   digitalWrite(LED_FLASH_PIN, LOW);
-  digitalWrite(LED_ONBOARD, HIGH);
+  setOnboardLed(false);
+  blinkOnboardLed(3, 120, 120);
+  fpMutex = xSemaphoreCreateMutex();
 
   connectWifi();
   initCamera();
   initFingerprint();
   setupRoutes();
   Blynk.config(BLYNK_AUTH_TOKEN);
+  if (WiFi.status() == WL_CONNECTED) {
+    Blynk.connect(3000);
+  }
+
+  xTaskCreatePinnedToCore(
+    fingerTask,
+    "fingerTask",
+    8192,
+    NULL,
+    1,
+    &fingerTaskHandle,
+    1
+  );
 }
 
 void loop() {
   server.handleClient();
   Blynk.run();
-
-  int fingerId = scanFP();
-  if (fingerId > 0) {
-    digitalWrite(LED_ONBOARD, LOW);
-    Serial.printf("[FP] Terdeteksi ID %d\n", fingerId);
-    sendScanToBackend(fingerId);
-    delay(1600);
-    digitalWrite(LED_ONBOARD, HIGH);
-  }
 
   delay(80);
 }

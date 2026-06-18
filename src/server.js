@@ -10,6 +10,7 @@ const multer = require('multer');
 const { WebSocketServer, WebSocket } = require('ws');
 const db = require('./db');
 const { sendBlynkUpdate } = require('./blynk');
+const packageInfo = require('../package.json');
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -59,7 +60,7 @@ function broadcast(type, payload) {
   return sent;
 }
 
-function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'info' }) {
+function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'info', ...extra }) {
   const safeStatus = ['info', 'success', 'warning', 'danger'].includes(status) ? status : 'info';
   const event = {
     id: Date.now(),
@@ -67,6 +68,7 @@ function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'i
     status: safeStatus,
     message: message || 'Event ESP32 diterima.',
     fingerprintId,
+    ...extra,
     createdAt: new Date().toISOString()
   };
 
@@ -77,12 +79,44 @@ function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'i
   return event;
 }
 
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDate(new Date());
 }
 
 function nowTime() {
   return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+}
+
+function fetchBuffer(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https:') ? require('https') : require('http');
+    const request = client.get(url, (response) => {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`ESP32 mengembalikan HTTP ${response.statusCode}`));
+        return;
+      }
+
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        buffer: Buffer.concat(chunks),
+        contentType: response.headers['content-type'] || 'image/jpeg'
+      }));
+    });
+
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error('Timeout mengambil snapshot ESP32.'));
+    });
+    request.on('error', reject);
+  });
 }
 
 function mapStudent(row) {
@@ -117,6 +151,68 @@ function dashboardStats(date = today()) {
     ratio: `${present}/${totalStudents}`,
     percent
   };
+}
+
+function mondayOfWeek(dateValue) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date;
+}
+
+function weeklyChart(date = today()) {
+  const start = mondayOfWeek(date);
+  const labels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const dates = labels.map((label, index) => {
+    const itemDate = new Date(start);
+    itemDate.setDate(start.getDate() + index);
+    return {
+      label,
+      attendance_date: formatLocalDate(itemDate)
+    };
+  });
+
+  const rows = db.prepare(`
+    SELECT attendance_date, COUNT(DISTINCT student_id) AS present_count
+    FROM attendances
+    WHERE attendance_date BETWEEN ? AND ?
+      AND status = 'present'
+      AND student_id IS NOT NULL
+    GROUP BY attendance_date
+  `).all(dates[0].attendance_date, dates[dates.length - 1].attendance_date);
+  const countByDate = new Map(rows.map((row) => [row.attendance_date, row.present_count]));
+
+  return dates.map((item) => ({
+    ...item,
+    present_count: countByDate.get(item.attendance_date) || 0
+  }));
+}
+
+function getSetting(key, fallback = '') {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || fallback;
+}
+
+async function notifyBlynkViaEsp32({ student, fingerprintId, stats }) {
+  const espIp = getSetting('esp_ip');
+  const result = await sendBlynkUpdate({
+    name: student?.name || '-',
+    fingerprintId,
+    status: 'Hadir',
+    time: nowTime(),
+    ...stats
+  }, espIp);
+
+  addEspEvent({
+    type: 'blynk',
+    status: result.ok ? 'success' : 'warning',
+    fingerprintId,
+    message: result.ok
+      ? `Data ${student?.name || `ID ${fingerprintId}`} terkirim ke Blynk.`
+      : `Blynk belum terkirim: ${result.reason || result.error || result.data?.message || 'ESP32 tidak merespons.'}`
+  });
+
+  return result;
 }
 
 function listAttendances(date = today(), limit = 80) {
@@ -166,13 +262,6 @@ function recordAttendance({ fingerprintId, photoPath = null, note = null }) {
   `).run(student ? student.id : null, fingerprintId, status, date, photoPath, note);
 
   const stats = dashboardStats(date);
-  sendBlynkUpdate({
-    name: student ? student.name : 'Ditolak',
-    fingerprintId,
-    status: student ? 'Hadir' : 'Ditolak',
-    time: nowTime(),
-    ...stats
-  });
 
   return {
     accepted: Boolean(student),
@@ -184,11 +273,15 @@ function recordAttendance({ fingerprintId, photoPath = null, note = null }) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'absensi-siswa', port: PORT });
+  res.json({ ok: true, service: 'absensi-siswa', version: packageInfo.version, port: PORT });
 });
 
 app.get('/api/meta', (_req, res) => {
-  res.json({ classOptions });
+  res.json({
+    classOptions,
+    version: packageInfo.version,
+    service: packageInfo.name
+  });
 });
 
 wss.on('connection', (socket) => {
@@ -214,18 +307,11 @@ app.post('/api/esp32/events', (req, res) => {
 
 app.get('/api/dashboard', (req, res) => {
   const date = req.query.date || today();
-  const rows = db.prepare(`
-    SELECT attendance_date, SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present_count
-    FROM attendances
-    GROUP BY attendance_date
-    ORDER BY attendance_date DESC
-    LIMIT 7
-  `).all().reverse();
 
   res.json({
     stats: dashboardStats(date),
     history: listAttendances(date),
-    chart: rows
+    chart: weeklyChart(date)
   });
 });
 
@@ -283,6 +369,22 @@ app.get('/api/attendances', (req, res) => {
   res.json(listAttendances(req.query.date || today(), Number(req.query.limit || 80)));
 });
 
+app.post('/api/attendances/:id/photo', upload.single('photo'), (req, res) => {
+  const id = Number(req.params.id);
+  if (!req.file) {
+    return res.status(400).json({ message: 'Foto wajib dikirim.' });
+  }
+
+  const attendance = db.prepare('SELECT * FROM attendances WHERE id = ?').get(id);
+  if (!attendance) {
+    return res.status(404).json({ message: 'Data absensi tidak ditemukan.' });
+  }
+
+  const photoPath = `/uploads/${req.file.filename}`;
+  db.prepare('UPDATE attendances SET photo_path = ? WHERE id = ?').run(photoPath, id);
+  res.json({ ok: true, attendance: { id, photoPath } });
+});
+
 app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
   const fingerprintId = Number(req.body.fingerprintId || req.body.fingerprint_id);
   if (!fingerprintId) {
@@ -295,12 +397,24 @@ app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
     type: 'scan',
     status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
     fingerprintId,
+    accepted: result.accepted,
+    duplicate: result.duplicate,
+    attendance: result.attendance,
+    student: result.student,
+    stats: result.stats,
     message: result.duplicate
       ? `ID ${fingerprintId} sudah absen hari ini.`
       : result.accepted
         ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
         : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
   });
+  if (result.accepted) {
+    notifyBlynkViaEsp32({
+      student: result.student,
+      fingerprintId,
+      stats: result.stats
+    });
+  }
   res.status(result.accepted ? 201 : 202).json(result);
 });
 
@@ -324,6 +438,22 @@ app.put('/api/settings', (req, res) => {
 
   Object.entries(req.body).forEach(([key, value]) => update.run(key, String(value ?? '')));
   res.json({ ok: true });
+});
+
+app.get('/api/esp32/snapshot', async (_req, res) => {
+  const espIp = getSetting('esp_ip');
+  if (!espIp) {
+    return res.status(400).json({ message: 'IP ESP32 belum diset.' });
+  }
+
+  try {
+    const snapshot = await fetchBuffer(`http://${espIp}/jpg?t=${Date.now()}`);
+    res.set('Cache-Control', 'no-store');
+    res.type(snapshot.contentType);
+    res.send(snapshot.buffer);
+  } catch (error) {
+    res.status(502).json({ message: error.message || 'Gagal mengambil snapshot ESP32.' });
+  }
 });
 
 app.post('/api/esp32/enroll', (req, res) => {
@@ -355,12 +485,24 @@ app.post('/api/esp32/scan', (req, res) => {
     type: 'scan',
     status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
     fingerprintId,
+    accepted: result.accepted,
+    duplicate: result.duplicate,
+    attendance: result.attendance,
+    student: result.student,
+    stats: result.stats,
     message: result.duplicate
       ? `ID ${fingerprintId} sudah absen hari ini.`
       : result.accepted
         ? `Sidik jari ID ${fingerprintId} terbaca dan absen berhasil.`
         : `Sidik jari ID ${fingerprintId} terbaca, tetapi belum terdaftar.`
   });
+  if (result.accepted) {
+    notifyBlynkViaEsp32({
+      student: result.student,
+      fingerprintId,
+      stats: result.stats
+    });
+  }
   res.status(result.accepted ? 201 : 202).json({ ok: true, ...result });
 });
 
