@@ -14,6 +14,7 @@ SemaphoreHandle_t fpMutex = NULL;
 TaskHandle_t fingerTaskHandle = NULL;
 volatile bool enrolling = false;
 volatile bool fingerprintReady = false;
+volatile bool attendanceMode = true;
 unsigned long lastWifiAttemptAt = 0;
 unsigned long lastBlynkAttemptAt = 0;
 unsigned long lastWifiLogAt = 0;
@@ -224,7 +225,7 @@ void fingerTask(void *parameter) {
   (void)parameter;
 
   for (;;) {
-    if (fingerprintReady && !enrolling && fpMutex && xSemaphoreTake(fpMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    if (fingerprintReady && attendanceMode && !enrolling && fpMutex && xSemaphoreTake(fpMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
       int fingerId = scanFP();
       xSemaphoreGive(fpMutex);
 
@@ -360,8 +361,34 @@ void setupRoutes() {
     body += (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "");
     body += "\",\"blynkConnected\":";
     body += (Blynk.connected() ? "true" : "false");
+    body += ",\"mode\":\"";
+    body += (attendanceMode ? "attendance" : "register");
+    body += "\"";
     body += "}";
     server.send(200, "application/json", body);
+  });
+  server.on("/mode", HTTP_GET, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    if (!server.hasArg("value")) {
+      server.send(400, "application/json", "{\"ok\":false,\"message\":\"value wajib diisi\"}");
+      return;
+    }
+
+    String value = server.arg("value");
+    if (value == "attendance") {
+      attendanceMode = true;
+    } else if (value == "register") {
+      attendanceMode = false;
+    } else {
+      server.send(400, "application/json", "{\"ok\":false,\"message\":\"mode harus attendance atau register\"}");
+      return;
+    }
+
+    String body = "{\"ok\":true,\"mode\":\"";
+    body += (attendanceMode ? "attendance" : "register");
+    body += "\"}";
+    server.send(200, "application/json", body);
+    Serial.printf("[MODE] %s\n", attendanceMode ? "attendance" : "register");
   });
   server.on("/enroll", HTTP_GET, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");

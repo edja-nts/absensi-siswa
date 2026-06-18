@@ -1,6 +1,6 @@
 #pragma once
 
-#define APP_VERSION "1.0.0"
+#define APP_VERSION "1.0.1"
 
 #define WIFI_SSID "c30"
 #define WIFI_PASSWORD "12345678"

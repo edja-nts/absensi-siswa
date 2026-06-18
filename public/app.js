@@ -23,6 +23,7 @@ const state = {
   espOnline: false,
   espStaConnected: false,
   blynkConnected: false,
+  espMode: 'attendance',
   selectedDate: ''
 };
 
@@ -98,6 +99,7 @@ function setView(viewId) {
   qsa('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === viewId));
   const title = qsa('.nav-item').find((item) => item.dataset.view === viewId)?.textContent || 'Dashboard';
   qs('#viewTitle').textContent = title;
+  syncEspModeForView(viewId);
   if (viewId === 'camera') {
     startLiveCamera();
   } else {
@@ -230,6 +232,7 @@ async function refreshFirmwareVersion() {
     state.firmwareVersion = data.version || '-';
     state.espStaConnected = Boolean(data.staConnected);
     state.blynkConnected = Boolean(data.blynkConnected);
+    state.espMode = data.mode || state.espMode;
   } catch (_error) {
     state.firmwareVersion = '-';
     state.espOnline = false;
@@ -241,7 +244,8 @@ async function refreshFirmwareVersion() {
 }
 
 function renderEspEvents() {
-  const latest = state.espEvents[0];
+  const scanEvents = state.espEvents.filter((event) => event.type === 'scan');
+  const latest = scanEvents[0];
   const list = qs('#espEventList');
   const monitor = qs('#fingerprintMonitor');
   const badge = qs('#fingerStatusBadge');
@@ -269,8 +273,8 @@ function renderEspEvents() {
   qs('#fingerStatusDetail').textContent = latest.message;
   qs('#fingerStatusId').textContent = latest.fingerprintId ? `ID ${latest.fingerprintId}` : 'ID -';
 
-  list.innerHTML = state.espEvents.length
-    ? state.espEvents.map((event) => `
+  list.innerHTML = scanEvents.length
+    ? scanEvents.map((event) => `
       <article class="event-item ${eventStatusClass(event.status)}">
         <span class="event-pulse"></span>
         <div>
@@ -281,6 +285,30 @@ function renderEspEvents() {
       </article>
     `).join('')
     : '<p class="muted">Belum ada aktivitas sensor.</p>';
+}
+
+async function setEspMode(mode) {
+  const ip = state.settings.esp_ip;
+  if (!ip || state.espMode === mode) return;
+
+  try {
+    const response = await fetch(`http://${ip}/mode?value=${encodeURIComponent(mode)}`, { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Gagal mengubah mode ESP32.');
+    state.espMode = data.mode || mode;
+    await refreshFirmwareVersion();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function syncEspModeForView(viewId) {
+  if (viewId === 'students') {
+    setEspMode('register');
+    return;
+  }
+
+  setEspMode('attendance');
 }
 
 function currentFingerprintId() {
@@ -828,6 +856,7 @@ function bindEvents() {
       toast('Isi ID Finger terlebih dulu.');
       return;
     }
+    await setEspMode('register');
     await addLocalEspEvent({
       type: 'enroll',
       status: 'info',

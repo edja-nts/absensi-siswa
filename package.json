@@ -1,6 +1,6 @@
 {
   "name": "absensi-siswa",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Sistem absensi siswa berbasis fingerprint, ESP32-CAM, Node.js, dan SQLite.",
   "main": "src/server.js",
   "scripts": {
