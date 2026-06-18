@@ -10,6 +10,23 @@
 WebServer server(80);
 HardwareSerial mySerial(1);
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
+SemaphoreHandle_t fpMutex = NULL;
+TaskHandle_t fingerTaskHandle = NULL;
+volatile bool enrolling = false;
+volatile bool fingerprintReady = false;
+
+void setOnboardLed(bool on) {
+  digitalWrite(LED_ONBOARD, on ? LOW : HIGH);
+}
+
+void blinkOnboardLed(uint8_t count, uint16_t onMs = 120, uint16_t offMs = 120) {
+  for (uint8_t i = 0; i < count; i++) {
+    setOnboardLed(true);
+    delay(onMs);
+    setOnboardLed(false);
+    delay(offMs);
+  }
+}
 
 bool initCamera() {
   camera_config_t cfg;
@@ -66,9 +83,11 @@ bool initFingerprint() {
   finger.begin(FP_BAUD);
   if (finger.verifyPassword()) {
     Serial.printf("[FP] OK! Kapasitas: %d\n", finger.capacity);
+    fingerprintReady = true;
     return true;
   }
   Serial.println("[FP] Sensor tidak ditemukan");
+  fingerprintReady = false;
   return false;
 }
 
@@ -124,7 +143,7 @@ bool failEnroll(uint8_t id, const char *message) {
   return false;
 }
 
-bool enrollFP(uint8_t id) {
+bool enrollFPUnlocked(uint8_t id) {
   int p = -1;
   Serial.printf("[FP] Mulai enrollment ID %d\n", id);
   sendEventToBackend("enroll", "info", "Mulai enrollment sidik jari", id);
@@ -158,6 +177,23 @@ bool enrollFP(uint8_t id) {
   return true;
 }
 
+bool enrollFP(uint8_t id) {
+  if (!fingerprintReady || !fpMutex) {
+    return failEnroll(id, "Sensor fingerprint belum siap");
+  }
+
+  enrolling = true;
+  if (xSemaphoreTake(fpMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    enrolling = false;
+    return failEnroll(id, "Sensor fingerprint sedang sibuk");
+  }
+
+  bool ok = enrollFPUnlocked(id);
+  xSemaphoreGive(fpMutex);
+  enrolling = false;
+  return ok;
+}
+
 void sendScanToBackend(int fingerprintId) {
   sendEventToBackend("scan", "info", "Sidik jari terbaca oleh sensor", fingerprintId);
 
@@ -175,6 +211,28 @@ void sendScanToBackend(int fingerprintId) {
   String response = http.getString();
   Serial.printf("[API] Scan %d -> HTTP %d %s\n", fingerprintId, code, response.c_str());
   http.end();
+}
+
+void fingerTask(void *parameter) {
+  (void)parameter;
+
+  for (;;) {
+    if (fingerprintReady && !enrolling && fpMutex && xSemaphoreTake(fpMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+      int fingerId = scanFP();
+      xSemaphoreGive(fpMutex);
+
+      if (fingerId > 0) {
+        setOnboardLed(true);
+        Serial.printf("[FP] Terdeteksi ID %d\n", fingerId);
+        sendScanToBackend(fingerId);
+        setOnboardLed(false);
+        blinkOnboardLed(2, 70, 70);
+        vTaskDelay(pdMS_TO_TICKS(1600));
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(80));
+  }
 }
 
 String argOrDefault(const char *name, const char *fallback) {
@@ -347,7 +405,9 @@ void setup() {
   pinMode(LED_FLASH_PIN, OUTPUT);
   pinMode(LED_ONBOARD, OUTPUT);
   digitalWrite(LED_FLASH_PIN, LOW);
-  digitalWrite(LED_ONBOARD, HIGH);
+  setOnboardLed(false);
+  blinkOnboardLed(3, 120, 120);
+  fpMutex = xSemaphoreCreateMutex();
 
   connectWifi();
   initCamera();
@@ -357,20 +417,21 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Blynk.connect(3000);
   }
+
+  xTaskCreatePinnedToCore(
+    fingerTask,
+    "fingerTask",
+    8192,
+    NULL,
+    1,
+    &fingerTaskHandle,
+    1
+  );
 }
 
 void loop() {
   server.handleClient();
   Blynk.run();
-
-  int fingerId = scanFP();
-  if (fingerId > 0) {
-    digitalWrite(LED_ONBOARD, LOW);
-    Serial.printf("[FP] Terdeteksi ID %d\n", fingerId);
-    sendScanToBackend(fingerId);
-    delay(1600);
-    digitalWrite(LED_ONBOARD, HIGH);
-  }
 
   delay(80);
 }

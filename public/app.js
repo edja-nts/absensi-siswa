@@ -9,6 +9,8 @@ const state = {
   wsReconnectTimer: null,
   fallbackTimer: null,
   cameraTimer: null,
+  captureTimer: null,
+  captureAttendanceId: null,
   enrollment: {
     fingerprintId: null,
     status: 'idle',
@@ -114,19 +116,39 @@ function renderStats() {
 function renderChart() {
   const chart = qs('#dailyChart');
   const rows = state.dashboard?.chart || [];
-  const max = Math.max(1, ...rows.map((row) => row.present_count || 0));
+  const totalStudents = state.dashboard?.stats?.totalStudents || 0;
 
   chart.innerHTML = rows.length
-    ? rows.map((row) => {
-      const height = Math.max(8, ((row.present_count || 0) / max) * 100);
+    ? `
+      <div class="chart-y-title">Persentase</div>
+      <div class="chart-y-axis">
+        <span>100%</span>
+        <span>75%</span>
+        <span>50%</span>
+        <span>25%</span>
+        <span>0%</span>
+      </div>
+      <div class="chart-plot">
+        ${rows.map((row) => {
+      const count = row.present_count || 0;
+      const percentValue = totalStudents > 0 ? Math.round((count / totalStudents) * 100) : 0;
+      const height = percentValue > 0 ? Math.max(8, percentValue) : 0;
       const label = row.label || row.attendance_date.slice(5);
       return `
         <div class="bar">
-          <div class="bar-fill" style="height:${height}%"></div>
-          <span>${label}<br>${row.present_count || 0}</span>
+          <div class="bar-track">
+            <div class="bar-fill" style="height:${height}%" title="${label}: ${percentValue}% (${count} siswa)">
+              <span>${percentValue}%</span>
+            </div>
+          </div>
+          <strong>${label}</strong>
+          <small>${count} siswa</small>
         </div>
       `;
-    }).join('')
+    }).join('')}
+      </div>
+      <div class="chart-x-title">Hari / Jumlah Hadir</div>
+    `
     : '<p class="muted">Belum ada data absensi.</p>';
 }
 
@@ -138,7 +160,9 @@ function renderHistory() {
   list.innerHTML = rows.length
     ? rows.map((item) => `
       <article class="history-item">
-        <span class="avatar">${escapeHtml(initials(item.name))}</span>
+        ${item.photoPath
+          ? `<img class="history-photo" src="${escapeHtml(item.photoPath)}" alt="Foto ${escapeHtml(item.name)}" />`
+          : `<span class="avatar">${escapeHtml(initials(item.name))}</span>`}
         <div>
           <strong>${escapeHtml(item.name)}</strong>
           <div class="muted">${escapeHtml(item.className)} - ID ${escapeHtml(item.fingerprintId)}</div>
@@ -331,6 +355,61 @@ async function refreshDashboard() {
   renderHistory();
 }
 
+function normalizeScanResult(event) {
+  return {
+    accepted: Boolean(event.accepted),
+    duplicate: Boolean(event.duplicate),
+    attendance: event.attendance || null,
+    student: event.student || null,
+    stats: event.stats || null,
+    fingerprintId: event.fingerprintId || null
+  };
+}
+
+async function uploadAttendancePhoto(attendanceId, blob) {
+  const formData = new FormData();
+  formData.append('photo', blob, `absensi-${attendanceId}.jpg`);
+
+  const response = await fetch(`/api/attendances/${attendanceId}/photo`, {
+    method: 'POST',
+    body: formData,
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Gagal menyimpan foto.' }));
+    throw new Error(error.message || 'Gagal menyimpan foto.');
+  }
+
+  return response.json();
+}
+
+async function captureAttendancePhoto(attendanceId) {
+  const response = await fetch(`/api/esp32/snapshot?t=${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Gagal mengambil foto dari ESP32-CAM.' }));
+    throw new Error(error.message || 'Gagal mengambil foto dari ESP32-CAM.');
+  }
+
+  const blob = await response.blob();
+  await uploadAttendancePhoto(attendanceId, blob);
+  return URL.createObjectURL(blob);
+}
+
+function setCaptureStatus(count, text, visible = true) {
+  const box = qs('#captureCountdown');
+  if (!box) return;
+  box.hidden = !visible;
+  qs('#captureCount').textContent = count;
+  qs('#captureText').textContent = text;
+}
+
+function clearCaptureTimer() {
+  if (!state.captureTimer) return;
+  window.clearInterval(state.captureTimer);
+  state.captureTimer = null;
+}
+
 async function addLocalEspEvent(event) {
   const result = await api('/api/esp32/events', {
     method: 'POST',
@@ -372,6 +451,9 @@ function connectEventSocket() {
     if (data.type === 'esp-event') {
       const isNew = mergeEspEvent(data.payload);
       if (isNew && data.payload?.type === 'scan') {
+        if (data.payload.accepted && !data.payload.duplicate) {
+          await showAttendanceCapture(normalizeScanResult(data.payload));
+        }
         await refreshDashboard();
       }
     }
@@ -401,7 +483,12 @@ async function pollEspEventsOnce() {
 
     if (hasNew) {
       toast(latest.message);
-      if (latest.type === 'scan') await refreshDashboard();
+      if (latest.type === 'scan') {
+        if (latest.accepted && !latest.duplicate) {
+          await showAttendanceCapture(normalizeScanResult(latest));
+        }
+        await refreshDashboard();
+      }
     }
   } catch (error) {
     console.warn(error.message);
@@ -518,6 +605,51 @@ function showAttendanceModal(result) {
 
   qs('#attendanceModal').classList.add('show');
   qs('#attendanceModal').setAttribute('aria-hidden', 'false');
+}
+
+async function showAttendanceCapture(result) {
+  const attendanceId = result.attendance?.id;
+  if (attendanceId && state.captureAttendanceId === attendanceId) return;
+
+  showAttendanceModal(result);
+  clearCaptureTimer();
+
+  if (!result.accepted || result.duplicate || !attendanceId) {
+    setCaptureStatus('', '', false);
+    return;
+  }
+
+  state.captureAttendanceId = attendanceId;
+  let seconds = 3;
+  setCaptureStatus(seconds, 'Bersiap ambil foto');
+
+  state.captureTimer = window.setInterval(async () => {
+    seconds -= 1;
+    if (seconds > 0) {
+      setCaptureStatus(seconds, 'Tetap menghadap kamera');
+      return;
+    }
+
+    clearCaptureTimer();
+    setCaptureStatus('...', 'Mengambil foto');
+
+    try {
+      const photoUrl = await captureAttendancePhoto(attendanceId);
+      const cam = qs('#modalCam');
+      cam.src = photoUrl;
+      cam.style.display = 'block';
+      qs('#modalCamEmpty').style.display = 'none';
+      setCaptureStatus('OK', 'Foto tersimpan');
+      toast('Foto absensi tersimpan.');
+      await refreshDashboard();
+      state.captureAttendanceId = null;
+      window.setTimeout(() => setCaptureStatus('', '', false), 1600);
+    } catch (error) {
+      setCaptureStatus('!', error.message);
+      state.captureAttendanceId = null;
+      toast(error.message);
+    }
+  }, 1000);
 }
 
 async function loadAll() {
@@ -700,11 +832,8 @@ function bindEvents() {
       method: 'POST',
       body: JSON.stringify({ fingerprintId: Number(qs('#scanFingerprintId').value) })
     });
-    showAttendanceModal(result);
-    state.dashboard = await api('/api/dashboard');
-    renderStats();
-    renderChart();
-    renderHistory();
+    await showAttendanceCapture(result);
+    await refreshDashboard();
   });
 
   qs('#settingsForm').addEventListener('submit', async (event) => {
@@ -723,6 +852,8 @@ function bindEvents() {
   qs('#reloadCamBtn').addEventListener('click', refreshCamera);
 
   qs('#closeModalBtn').addEventListener('click', () => {
+    clearCaptureTimer();
+    state.captureAttendanceId = null;
     qs('#attendanceModal').classList.remove('show');
     qs('#attendanceModal').setAttribute('aria-hidden', 'true');
   });

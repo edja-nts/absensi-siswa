@@ -307,17 +307,55 @@ button:disabled:hover {
 
 .chart {
   display: grid;
-  grid-template-columns: repeat(7, minmax(36px, 1fr));
-  align-items: end;
-  gap: 12px;
-  height: 260px;
+  grid-template-columns: auto 46px minmax(0, 1fr);
+  grid-template-rows: 210px auto;
+  gap: 8px 12px;
+  min-height: 276px;
   padding-top: 8px;
+}
+
+.chart-y-title {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.chart-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 190px;
+  align-self: start;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.chart-plot {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(46px, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  min-height: 210px;
+}
+
+.chart-x-title {
+  grid-column: 3;
+  margin-top: 25px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .bar {
   display: grid;
-  grid-template-rows: 1fr auto;
-  gap: 8px;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 4px;
   height: 100%;
   text-align: center;
   color: var(--muted);
@@ -325,11 +363,41 @@ button:disabled:hover {
   font-weight: 800;
 }
 
+.bar-track {
+  display: flex;
+  align-items: flex-end;
+  height: 190px;
+  min-height: 0;
+  border-bottom: 1px solid rgba(102, 112, 133, 0.32);
+  background:
+    linear-gradient(to bottom, rgba(102, 112, 133, 0.16) 1px, transparent 1px) 0 0 / 100% 25%;
+}
+
 .bar-fill {
-  align-self: end;
-  min-height: 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
   border-radius: 8px 8px 2px 2px;
   background: linear-gradient(180deg, #35c2a3 0%, #2176ff 100%);
+}
+
+.bar-fill span {
+  margin-top: -20px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.bar strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.bar small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .history-list {
@@ -341,7 +409,7 @@ button:disabled:hover {
 
 .history-item {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 56px 1fr auto;
   align-items: center;
   gap: 12px;
   padding: 10px;
@@ -351,13 +419,21 @@ button:disabled:hover {
 
 .avatar {
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   place-items: center;
   border-radius: 8px;
   background: #e8f7f3;
   color: #08735b;
   font-weight: 900;
+}
+
+.history-photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #111827;
 }
 
 .badge {
@@ -684,6 +760,41 @@ th {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.capture-countdown {
+  position: absolute;
+  inset: auto 18px 18px;
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(16, 24, 40, 0.84);
+  color: #fff;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+.capture-countdown[hidden] {
+  display: none;
+}
+
+.capture-countdown strong {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 50%;
+  background: #35c2a3;
+  color: #08201b;
+  font-size: 23px;
+  font-weight: 900;
+}
+
+.capture-countdown span {
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .modal {

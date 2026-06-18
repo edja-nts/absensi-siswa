@@ -60,7 +60,7 @@ function broadcast(type, payload) {
   return sent;
 }
 
-function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'info' }) {
+function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'info', ...extra }) {
   const safeStatus = ['info', 'success', 'warning', 'danger'].includes(status) ? status : 'info';
   const event = {
     id: Date.now(),
@@ -68,6 +68,7 @@ function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'i
     status: safeStatus,
     message: message || 'Event ESP32 diterima.',
     fingerprintId,
+    ...extra,
     createdAt: new Date().toISOString()
   };
 
@@ -91,6 +92,31 @@ function today() {
 
 function nowTime() {
   return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+}
+
+function fetchBuffer(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https:') ? require('https') : require('http');
+    const request = client.get(url, (response) => {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`ESP32 mengembalikan HTTP ${response.statusCode}`));
+        return;
+      }
+
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        buffer: Buffer.concat(chunks),
+        contentType: response.headers['content-type'] || 'image/jpeg'
+      }));
+    });
+
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error('Timeout mengambil snapshot ESP32.'));
+    });
+    request.on('error', reject);
+  });
 }
 
 function mapStudent(row) {
@@ -343,6 +369,22 @@ app.get('/api/attendances', (req, res) => {
   res.json(listAttendances(req.query.date || today(), Number(req.query.limit || 80)));
 });
 
+app.post('/api/attendances/:id/photo', upload.single('photo'), (req, res) => {
+  const id = Number(req.params.id);
+  if (!req.file) {
+    return res.status(400).json({ message: 'Foto wajib dikirim.' });
+  }
+
+  const attendance = db.prepare('SELECT * FROM attendances WHERE id = ?').get(id);
+  if (!attendance) {
+    return res.status(404).json({ message: 'Data absensi tidak ditemukan.' });
+  }
+
+  const photoPath = `/uploads/${req.file.filename}`;
+  db.prepare('UPDATE attendances SET photo_path = ? WHERE id = ?').run(photoPath, id);
+  res.json({ ok: true, attendance: { id, photoPath } });
+});
+
 app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
   const fingerprintId = Number(req.body.fingerprintId || req.body.fingerprint_id);
   if (!fingerprintId) {
@@ -355,6 +397,11 @@ app.post('/api/attendances/scan', upload.single('photo'), (req, res) => {
     type: 'scan',
     status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
     fingerprintId,
+    accepted: result.accepted,
+    duplicate: result.duplicate,
+    attendance: result.attendance,
+    student: result.student,
+    stats: result.stats,
     message: result.duplicate
       ? `ID ${fingerprintId} sudah absen hari ini.`
       : result.accepted
@@ -393,6 +440,22 @@ app.put('/api/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/esp32/snapshot', async (_req, res) => {
+  const espIp = getSetting('esp_ip');
+  if (!espIp) {
+    return res.status(400).json({ message: 'IP ESP32 belum diset.' });
+  }
+
+  try {
+    const snapshot = await fetchBuffer(`http://${espIp}/jpg?t=${Date.now()}`);
+    res.set('Cache-Control', 'no-store');
+    res.type(snapshot.contentType);
+    res.send(snapshot.buffer);
+  } catch (error) {
+    res.status(502).json({ message: error.message || 'Gagal mengambil snapshot ESP32.' });
+  }
+});
+
 app.post('/api/esp32/enroll', (req, res) => {
   const { name, nik, className, fingerprintId } = req.body;
   if (!name || !className || !fingerprintId) {
@@ -422,6 +485,11 @@ app.post('/api/esp32/scan', (req, res) => {
     type: 'scan',
     status: result.accepted ? 'success' : result.duplicate ? 'warning' : 'danger',
     fingerprintId,
+    accepted: result.accepted,
+    duplicate: result.duplicate,
+    attendance: result.attendance,
+    student: result.student,
+    stats: result.stats,
     message: result.duplicate
       ? `ID ${fingerprintId} sudah absen hari ini.`
       : result.accepted
