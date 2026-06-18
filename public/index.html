@@ -66,14 +66,20 @@
         <div class="content-grid">
           <section class="panel">
             <div class="panel-head">
-              <h2>Grafik Harian</h2>
+              <h2>Grafik Kehadiran</h2>
+              <div class="panel-actions">
+                <label class="compact-field">
+                  Tanggal
+                  <input id="dashboardDate" type="date" />
+                </label>
+              </div>
             </div>
             <div class="chart" id="dailyChart"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
-              <h2>Histori Hari Ini</h2>
+              <h2 id="historyTitle">Histori</h2>
               <button class="ghost danger" id="clearHistoryBtn">Clear</button>
             </div>
             <div class="history-list" id="historyList"></div>

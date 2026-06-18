@@ -78,8 +78,15 @@ function addEspEvent({ type = 'info', message, fingerprintId = null, status = 'i
   return event;
 }
 
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDate(new Date());
 }
 
 function nowTime() {
@@ -118,6 +125,42 @@ function dashboardStats(date = today()) {
     ratio: `${present}/${totalStudents}`,
     percent
   };
+}
+
+function mondayOfWeek(dateValue) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date;
+}
+
+function weeklyChart(date = today()) {
+  const start = mondayOfWeek(date);
+  const labels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const dates = labels.map((label, index) => {
+    const itemDate = new Date(start);
+    itemDate.setDate(start.getDate() + index);
+    return {
+      label,
+      attendance_date: formatLocalDate(itemDate)
+    };
+  });
+
+  const rows = db.prepare(`
+    SELECT attendance_date, COUNT(DISTINCT student_id) AS present_count
+    FROM attendances
+    WHERE attendance_date BETWEEN ? AND ?
+      AND status = 'present'
+      AND student_id IS NOT NULL
+    GROUP BY attendance_date
+  `).all(dates[0].attendance_date, dates[dates.length - 1].attendance_date);
+  const countByDate = new Map(rows.map((row) => [row.attendance_date, row.present_count]));
+
+  return dates.map((item) => ({
+    ...item,
+    present_count: countByDate.get(item.attendance_date) || 0
+  }));
 }
 
 function getSetting(key, fallback = '') {
@@ -238,18 +281,11 @@ app.post('/api/esp32/events', (req, res) => {
 
 app.get('/api/dashboard', (req, res) => {
   const date = req.query.date || today();
-  const rows = db.prepare(`
-    SELECT attendance_date, SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present_count
-    FROM attendances
-    GROUP BY attendance_date
-    ORDER BY attendance_date DESC
-    LIMIT 7
-  `).all().reverse();
 
   res.json({
     stats: dashboardStats(date),
     history: listAttendances(date),
-    chart: rows
+    chart: weeklyChart(date)
   });
 });
 

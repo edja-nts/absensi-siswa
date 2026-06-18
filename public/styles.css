@@ -284,6 +284,22 @@ button:disabled:hover {
   margin-bottom: 16px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.compact-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-field input {
+  width: 160px;
+}
+
 .panel h2 {
   margin: 0;
   font-size: 19px;

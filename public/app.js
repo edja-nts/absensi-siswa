@@ -8,13 +8,15 @@ const state = {
   ws: null,
   wsReconnectTimer: null,
   fallbackTimer: null,
+  cameraTimer: null,
   enrollment: {
     fingerprintId: null,
     status: 'idle',
     originalFingerprintId: null
   },
   version: '-',
-  firmwareVersion: '-'
+  firmwareVersion: '-',
+  selectedDate: ''
 };
 
 const qs = (selector) => document.querySelector(selector);
@@ -58,7 +60,25 @@ function initials(name) {
 }
 
 function formatDate() {
-  qs('#todayLabel').textContent = new Date().toLocaleDateString('id-ID', {
+  const now = new Date();
+  state.selectedDate = formatInputDate(now);
+  qs('#todayLabel').textContent = now.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+function formatInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatReadableDate(dateValue) {
+  return new Date(`${dateValue}T00:00:00`).toLocaleDateString('id-ID', {
     weekday: 'long',
     day: '2-digit',
     month: 'long',
@@ -71,7 +91,11 @@ function setView(viewId) {
   qsa('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === viewId));
   const title = qsa('.nav-item').find((item) => item.dataset.view === viewId)?.textContent || 'Dashboard';
   qs('#viewTitle').textContent = title;
-  if (viewId === 'camera') refreshCamera();
+  if (viewId === 'camera') {
+    startLiveCamera();
+  } else {
+    stopLiveCamera();
+  }
 }
 
 function fillClasses() {
@@ -95,7 +119,7 @@ function renderChart() {
   chart.innerHTML = rows.length
     ? rows.map((row) => {
       const height = Math.max(8, ((row.present_count || 0) / max) * 100);
-      const label = row.attendance_date.slice(5);
+      const label = row.label || row.attendance_date.slice(5);
       return `
         <div class="bar">
           <div class="bar-fill" style="height:${height}%"></div>
@@ -109,6 +133,7 @@ function renderChart() {
 function renderHistory() {
   const list = qs('#historyList');
   const rows = state.dashboard?.history || [];
+  qs('#historyTitle').textContent = `Histori Absensi - ${formatReadableDate(state.selectedDate)}`;
 
   list.innerHTML = rows.length
     ? rows.map((item) => `
@@ -300,7 +325,7 @@ function mergeEspEvent(event) {
 }
 
 async function refreshDashboard() {
-  state.dashboard = await api('/api/dashboard');
+  state.dashboard = await api(`/api/dashboard?date=${encodeURIComponent(state.selectedDate)}`);
   renderStats();
   renderChart();
   renderHistory();
@@ -453,9 +478,21 @@ function refreshCamera() {
     return;
   }
 
-  image.src = `http://${ip}/stream?t=${Date.now()}`;
+  image.src = `http://${ip}/jpg?t=${Date.now()}`;
   image.style.display = 'block';
   empty.style.display = 'none';
+}
+
+function startLiveCamera() {
+  refreshCamera();
+  if (state.cameraTimer) window.clearInterval(state.cameraTimer);
+  state.cameraTimer = window.setInterval(refreshCamera, 900);
+}
+
+function stopLiveCamera() {
+  if (!state.cameraTimer) return;
+  window.clearInterval(state.cameraTimer);
+  state.cameraTimer = null;
 }
 
 function showAttendanceModal(result) {
@@ -471,7 +508,7 @@ function showAttendanceModal(result) {
   const cam = qs('#modalCam');
   const empty = qs('#modalCamEmpty');
   if (ip) {
-    cam.src = `http://${ip}/stream?t=${Date.now()}`;
+    cam.src = `http://${ip}/jpg?t=${Date.now()}`;
     cam.style.display = 'block';
     empty.style.display = 'none';
   } else {
@@ -488,7 +525,7 @@ async function loadAll() {
     api('/api/meta'),
     api('/api/students'),
     api('/api/settings'),
-    api('/api/dashboard'),
+    api(`/api/dashboard?date=${encodeURIComponent(state.selectedDate)}`),
     api('/api/esp32/events')
   ]);
 
@@ -509,6 +546,7 @@ async function loadAll() {
   updateEspStatus();
   renderVersions();
   refreshFirmwareVersion();
+  qs('#dashboardDate').value = state.selectedDate;
 }
 
 function bindEvents() {
@@ -560,6 +598,11 @@ function bindEvents() {
   });
 
   qs('#resetFormBtn').addEventListener('click', resetStudentForm);
+
+  qs('#dashboardDate').addEventListener('change', async (event) => {
+    state.selectedDate = event.target.value || formatInputDate(new Date());
+    await refreshDashboard();
+  });
 
   qs('#fingerprintId').addEventListener('input', () => {
     const id = qs('#studentId').value;
@@ -640,13 +683,15 @@ function bindEvents() {
   });
 
   qs('#clearHistoryBtn').addEventListener('click', async () => {
-    if (!confirm('Clear histori absensi hari ini?')) return;
-    await api('/api/attendances', { method: 'DELETE' });
+    const dateLabel = formatReadableDate(state.selectedDate);
+    const answer = prompt(`Ketik HAPUS untuk clear histori absensi ${dateLabel}.`);
+    if (answer !== 'HAPUS') {
+      toast('Clear histori dibatalkan.');
+      return;
+    }
+    await api(`/api/attendances?date=${encodeURIComponent(state.selectedDate)}`, { method: 'DELETE' });
     toast('Histori hari ini dibersihkan.');
-    state.dashboard = await api('/api/dashboard');
-    renderStats();
-    renderChart();
-    renderHistory();
+    await refreshDashboard();
   });
 
   qs('#scanForm').addEventListener('submit', async (event) => {

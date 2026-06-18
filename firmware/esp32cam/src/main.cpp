@@ -254,7 +254,8 @@ void handleStream() {
   client.print("Cache-Control: no-cache\r\n");
   client.print("Connection: close\r\n\r\n");
 
-  while (client.connected()) {
+  int frameCount = 0;
+  while (client.connected() && frameCount < 40) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) break;
 
@@ -275,6 +276,7 @@ void handleStream() {
     client.write(jpgBuf, jpgLen);
     client.print("\r\n");
     free(jpgBuf);
+    frameCount++;
 
     delay(120);
   }
